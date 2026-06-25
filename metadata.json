@@ -1,0 +1,8 @@
+{
+  "name": "Scotter United JFC Pitch Booking System",
+  "description": "A pitch booking diary and slot management system for Scotter United Junior Football Club, supporting multiple pitch sizes, slot configuration, and manager request workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
