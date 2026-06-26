@@ -19,6 +19,7 @@ interface BookingModalProps {
     notes: string;
     teamName?: string;
     endTime?: string;
+    bookingType?: 'STANDARD' | 'MATCH';
   }) => void;
   selectedPitchId?: PitchSize;
   selectedDate?: string;
@@ -51,36 +52,28 @@ export default function BookingModal({
   const [error, setError] = useState<string>('');
   const [adminSelectedTeam, setAdminSelectedTeam] = useState<string>('');
   const [isCustomTime, setIsCustomTime] = useState<boolean>(false);
+  const [bookingType, setBookingType] = useState<'STANDARD' | 'MATCH'>('STANDARD');
+
+  const parseTimeToMinutes = (t: string): number => {
+    if (!t) return 0;
+    const [h, m] = t.split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
 
   // Helper to determine the standard end time for a given slot, date, and pitch format
-  const getEndTimeForSlot = (pId: PitchSize, dateStr: string, slot: string): string => {
-    if (!dateStr || !slot) return '';
-    const d = new Date(dateStr);
-    const day = d.getDay();
-    const isWeekend = day === 0 || day === 6;
-    if (isWeekend) {
-      if (pId === '11v11') {
-        if (slot === '10:00') return '12:00';
-        if (slot === '12:00') return '14:00';
-        const [hStr, mStr] = slot.split(':');
-        const h = parseInt(hStr, 10) + 2;
-        return `${String(h).padStart(2, '0')}:${mStr}`;
-      } else {
-        if (slot === '09:30') return '10:45';
-        if (slot === '10:45') return '12:00';
-        if (slot === '12:00') return '13:15';
-        
-        const [hStr, mStr] = slot.split(':');
-        const totalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10) + 75;
-        const h = Math.floor(totalMinutes / 60);
-        const m = totalMinutes % 60;
-        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-      }
-    } else {
-      const [hStr, mStr] = slot.split(':');
-      const h = parseInt(hStr, 10) + 1;
-      return `${String(h).padStart(2, '0')}:${mStr}`;
-    }
+  const getEndTimeForSlot = (pId: PitchSize, dateStr: string, slot: string, type: 'STANDARD' | 'MATCH' = bookingType): string => {
+    if (!slot) return '';
+    const [hStr, mStr] = slot.split(':');
+    const hNum = parseInt(hStr, 10);
+    const mNum = parseInt(mStr, 10);
+    if (isNaN(hNum) || isNaN(mNum)) return '';
+
+    // Standard is 1 hour (60 minutes). Match is 1 hour 15 minutes (75 minutes).
+    const duration = type === 'MATCH' ? 75 : 60;
+    const totalMinutes = hNum * 60 + mNum + duration;
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   };
 
   useEffect(() => {
@@ -94,7 +87,18 @@ export default function BookingModal({
           const isCustom = existing.timeSlot && !pitchSlots.includes(existing.timeSlot);
           setIsCustomTime(!!isCustom);
           setTimeSlot(existing.timeSlot);
-          setEndTime(existing.endTime || getEndTimeForSlot(existing.pitchId, existing.date, existing.timeSlot));
+          
+          let extType: 'STANDARD' | 'MATCH' = 'STANDARD';
+          if (existing.bookingType) {
+            extType = existing.bookingType;
+          } else if (existing.endTime && existing.timeSlot) {
+            const diff = parseTimeToMinutes(existing.endTime) - parseTimeToMinutes(existing.timeSlot);
+            if (diff === 75) {
+              extType = 'MATCH';
+            }
+          }
+          setBookingType(extType);
+          setEndTime(existing.endTime || getEndTimeForSlot(existing.pitchId, existing.date, existing.timeSlot, extType));
           setNotes(existing.notes);
           setError('');
           setAdminSelectedTeam(existing.teamName);
@@ -111,7 +115,8 @@ export default function BookingModal({
 
       const resolvedSlot = selectedSlot || pitchSlots[0] || '09:30';
       setTimeSlot(resolvedSlot);
-      setEndTime(getEndTimeForSlot(selectedPitchId, selectedDate || new Date().toISOString().split('T')[0], resolvedSlot));
+      setBookingType('STANDARD');
+      setEndTime(getEndTimeForSlot(selectedPitchId, selectedDate || new Date().toISOString().split('T')[0], resolvedSlot, 'STANDARD'));
       setNotes(selectedNotes);
       setError('');
       
@@ -124,9 +129,9 @@ export default function BookingModal({
   // Keep standard slot endTime in sync
   useEffect(() => {
     if (!isCustomTime && date && timeSlot) {
-      setEndTime(getEndTimeForSlot(pitchId, date, timeSlot));
+      setEndTime(getEndTimeForSlot(pitchId, date, timeSlot, bookingType));
     }
-  }, [isCustomTime, pitchId, date, timeSlot]);
+  }, [isCustomTime, pitchId, date, timeSlot, bookingType]);
 
   if (!isOpen) return null;
 
@@ -250,6 +255,7 @@ export default function BookingModal({
       date,
       timeSlot,
       endTime,
+      bookingType,
       notes,
       teamName: currentUser.role === 'ADMIN' ? adminSelectedTeam : undefined,
     });
@@ -335,6 +341,38 @@ export default function BookingModal({
                     {p.name}
                   </option>
                 ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Booking Type Dropdown */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+              Booking Type / Format
+            </label>
+            <div className="relative">
+              <select
+                value={bookingType}
+                onChange={(e) => {
+                  const nextType = e.target.value as 'STANDARD' | 'MATCH';
+                  setBookingType(nextType);
+                  if (!isCustomTime && date && timeSlot) {
+                    setEndTime(getEndTimeForSlot(pitchId, date, timeSlot, nextType));
+                  } else if (isCustomTime && date && timeSlot) {
+                    const duration = nextType === 'MATCH' ? 75 : 60;
+                    const [hStr, mStr] = timeSlot.split(':');
+                    if (hStr && mStr) {
+                      const mins = parseInt(hStr, 10) * 60 + parseInt(mStr, 10) + duration;
+                      const h = Math.floor(mins / 60);
+                      const m = mins % 60;
+                      setEndTime(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+                    }
+                  }
+                }}
+                className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2.5 px-3 text-slate-800 font-semibold focus:border-blue-900 focus:outline-none focus:ring-0 transition-colors"
+              >
+                <option value="STANDARD">Standard Slot (1 Hour)</option>
+                <option value="MATCH">Match / Friendly (1 Hour 15 Mins)</option>
               </select>
             </div>
           </div>

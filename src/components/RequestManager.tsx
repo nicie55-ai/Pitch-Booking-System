@@ -29,6 +29,7 @@ export default function RequestManager({
   // Local state for admin decline reasons
   const [decliningId, setDecliningId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
+  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
 
   // Filter bookings based on user role and filters
   const visibleBookings = bookings.filter((b) => {
@@ -61,27 +62,55 @@ export default function RequestManager({
     <div className="space-y-6">
       {/* Header Summary Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white border-2 border-slate-100 rounded-2xl p-5 shadow-sm">
-          <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Total Bookings</p>
-          <p className="text-2xl font-extrabold text-blue-900 mt-1">
-            {bookings.filter((b) => b.status === BookingStatus.APPROVED).length}
-          </p>
-          <p className="text-[10px] text-slate-400 mt-1 font-medium">Approved fixtures in calendar</p>
-        </div>
-        <div className="bg-white border-2 border-slate-100 rounded-2xl p-5 shadow-sm">
-          <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Pending Requests</p>
-          <p className="text-2xl font-extrabold text-amber-600 mt-1">
-            {bookings.filter((b) => b.status === BookingStatus.PENDING).length}
-          </p>
-          <p className="text-[10px] text-slate-400 mt-1 font-medium">Awaiting administrator action</p>
-        </div>
-        <div className="bg-white border-2 border-slate-100 rounded-2xl p-5 shadow-sm">
-          <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">My Pending Requests</p>
-          <p className="text-2xl font-extrabold text-slate-700 mt-1">
-            {bookings.filter((b) => b.status === BookingStatus.PENDING && (currentUser.role === 'ADMIN' || b.managerId === currentUser.id)).length}
-          </p>
-          <p className="text-[10px] text-slate-400 mt-1 font-medium">Awaiting decision for your team</p>
-        </div>
+        {currentUser.role === 'ADMIN' ? (
+          <>
+            <div className="bg-white border-2 border-slate-100 rounded-2xl p-5 shadow-sm" id="admin-total-bookings-card">
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Club Total Bookings</p>
+              <p className="text-2xl font-extrabold text-blue-900 mt-1">
+                {bookings.filter((b) => b.status === BookingStatus.APPROVED).length}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-1 font-medium">Approved fixtures across all pitches</p>
+            </div>
+            <div className="bg-white border-2 border-slate-100 rounded-2xl p-5 shadow-sm" id="admin-pending-requests-card">
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Club Pending Requests</p>
+              <p className="text-2xl font-extrabold text-amber-600 mt-1">
+                {bookings.filter((b) => b.status === BookingStatus.PENDING).length}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-1 font-medium">Awaiting administrator action</p>
+            </div>
+            <div className="bg-white border-2 border-slate-100 rounded-2xl p-5 shadow-sm" id="admin-block-bookings-card">
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Admin Block Bookings</p>
+              <p className="text-2xl font-extrabold text-slate-700 mt-1">
+                {bookings.filter((b) => b.managerId === currentUser.id).length}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-1 font-medium">Direct admin block-bookings created</p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="bg-white border-2 border-slate-100 rounded-2xl p-5 shadow-sm" id="team-total-bookings-card">
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">My Team Bookings</p>
+              <p className="text-2xl font-extrabold text-blue-900 mt-1">
+                {bookings.filter((b) => b.managerId === currentUser.id && b.status === BookingStatus.APPROVED).length}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-1 font-medium">Approved fixtures for your team</p>
+            </div>
+            <div className="bg-white border-2 border-slate-100 rounded-2xl p-5 shadow-sm" id="team-pending-requests-card">
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">My Pending Requests</p>
+              <p className="text-2xl font-extrabold text-amber-600 mt-1">
+                {bookings.filter((b) => b.managerId === currentUser.id && b.status === BookingStatus.PENDING).length}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-1 font-medium">Awaiting admin approval</p>
+            </div>
+            <div className="bg-white border-2 border-slate-100 rounded-2xl p-5 shadow-sm" id="team-total-requests-card">
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">My Total Requests</p>
+              <p className="text-2xl font-extrabold text-slate-700 mt-1">
+                {bookings.filter((b) => b.managerId === currentUser.id).length}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-1 font-medium">All historical sessions submitted</p>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Filter Toolbar */}
@@ -273,16 +302,33 @@ export default function RequestManager({
                       /* Cancellation / Info */
                       <div className="flex flex-col sm:items-end gap-1 text-xs">
                         {(isApproved || isPending) && (currentUser.role === 'ADMIN' || b.managerId === currentUser.id) && (
-                          <button
-                            onClick={() => {
-                              if (confirm(`Are you sure you want to cancel this booking?`)) {
-                                onCancelBooking(b.id);
-                              }
-                            }}
-                            className="text-red-700 hover:bg-red-50 font-bold border border-red-100 py-1.5 px-3.5 rounded-lg transition-colors"
-                          >
-                            Cancel {isApproved ? 'Booking' : 'Request'}
-                          </button>
+                          confirmCancelId === b.id ? (
+                            <div className="flex items-center space-x-1.5 bg-red-50 border border-red-100 p-1.5 rounded-lg">
+                              <span className="text-[10px] font-bold text-red-700">Cancel?</span>
+                              <button
+                                onClick={() => {
+                                  onCancelBooking(b.id);
+                                  setConfirmCancelId(null);
+                                }}
+                                className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-sm transition-all"
+                              >
+                                Yes
+                              </button>
+                              <button
+                                onClick={() => setConfirmCancelId(null)}
+                                className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded transition-all"
+                              >
+                                No
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmCancelId(b.id)}
+                              className="text-red-700 hover:bg-red-50 font-bold border border-red-100 py-1.5 px-3.5 rounded-lg transition-all"
+                            >
+                              Cancel {isApproved ? 'Booking' : 'Request'}
+                            </button>
+                          )
                         )}
                         <span className="text-[10px] text-slate-500 font-bold mt-1 bg-slate-50 border border-slate-100 py-1 px-2 rounded-lg">
                           Submitted: {new Date(b.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} at {new Date(b.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}

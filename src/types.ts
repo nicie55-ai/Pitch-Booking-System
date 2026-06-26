@@ -25,6 +25,7 @@ export interface Booking {
   declineReason?: string;
   createdAt: string;
   endTime?: string; // e.g. "10:45"
+  bookingType?: 'STANDARD' | 'MATCH';
 }
 
 export interface PitchConfig {
@@ -54,4 +55,7 @@ export interface User {
   name: string;
   role: 'ADMIN' | 'MANAGER';
   teamName?: string;
+  password?: string;
+  googleLinked?: boolean;
+  googleEmail?: string;
 }

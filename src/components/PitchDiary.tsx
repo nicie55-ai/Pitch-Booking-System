@@ -37,6 +37,8 @@ interface PitchDiaryProps {
   onCancelBooking: (id: string) => void;
   onAddBookingsBulk?: (newBookings: Booking[]) => void;
   onUpdateBooking?: (id: string, fields: Partial<Booking>) => void;
+  users?: UserType[];
+  onUpdateUsers?: (newUsers: UserType[]) => void;
 }
 
 export default function PitchDiary({
@@ -51,6 +53,8 @@ export default function PitchDiary({
   onCancelBooking,
   onAddBookingsBulk,
   onUpdateBooking,
+  users,
+  onUpdateUsers,
 }: PitchDiaryProps) {
   // Decline active states for specific booking IDs (to show decline text area)
   const [decliningId, setDecliningId] = useState<string | null>(null);
@@ -340,6 +344,8 @@ export default function PitchDiary({
           onUpdateBooking={onUpdateBooking}
           currentUser={currentUser}
           onRequestBooking={onRequestBooking}
+          users={users}
+          onUpdateUsers={onUpdateUsers}
         />
       )}
 
@@ -510,12 +516,15 @@ export default function PitchDiary({
                 KO Time
               </div>
               <div className="flex-1 grid grid-cols-4 divide-x divide-slate-200">
-                {pitchConfigs.map((pitch) => (
-                  <div key={pitch.id} className="py-4 text-center text-xs font-black text-blue-950 uppercase tracking-wider flex flex-col justify-center">
-                    <span className="font-black text-blue-900 text-[13px]">{pitch.name}</span>
-                    <span className="text-[9px] text-slate-400 font-bold mt-0.5 tracking-wider">{pitch.id} Pitch Format</span>
-                  </div>
-                ))}
+                {pitchConfigs.map((pitch) => {
+                  const formatMatch = pitch.name.match(/(\d+v\d+)/i);
+                  const cleanName = formatMatch ? formatMatch[1].toUpperCase() : pitch.name;
+                  return (
+                    <div key={pitch.id} className="py-4 text-center text-xs font-black text-blue-950 uppercase tracking-wider flex flex-col justify-center">
+                      <span className="font-black text-blue-900 text-[13px]">{cleanName}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -527,7 +536,7 @@ export default function PitchDiary({
                   return (
                     <div
                       key={hour}
-                      className="absolute left-0 right-0 border-t border-transparent text-center"
+                      className="absolute left-0 right-0 border-t border-slate-300/80 text-center"
                       style={{ top: `${(idx / HOUR_ROWS.length) * 100}%` }}
                     >
                       <div className="flex items-center justify-center space-x-1 py-1 text-slate-600">
@@ -538,7 +547,7 @@ export default function PitchDiary({
                   );
                 })}
                 {/* 22:00 bottom label */}
-                <div className="absolute left-0 right-0 bottom-0 text-center">
+                <div className="absolute left-0 right-0 bottom-0 text-center border-t border-slate-300/80">
                   <div className="flex items-center justify-center space-x-1 py-1 text-slate-600">
                     <Clock className="w-3 h-3 text-slate-400" />
                     <span className="text-[11px] font-extrabold font-mono tracking-tight">22:00</span>
@@ -562,14 +571,14 @@ export default function PitchDiary({
                   const standardSlots = getStandardSlotsForDate(pitch.id, selectedDate);
 
                   return (
-                    <div key={pitch.id} className="relative h-full overflow-visible group/col">
+                    <div key={pitch.id} className="relative h-full overflow-visible group/col hover:z-30">
                       {/* 1. Background Grid Hour lanes */}
                       {HOUR_ROWS.map((hour, idx) => {
                         return (
                           <div
                             key={hour}
                             onClick={() => onRequestBooking(pitch.id, hour)}
-                            className="absolute left-0 right-0 border-b border-slate-100 hover:bg-slate-50/40 transition-colors cursor-pointer flex items-start justify-end p-1.5 group/cell"
+                            className="absolute left-0 right-0 border-b border-slate-300/80 hover:bg-slate-50/40 transition-colors cursor-pointer flex items-start justify-end p-1.5 group/cell"
                             style={{
                               top: `${(idx / HOUR_ROWS.length) * 100}%`,
                               height: `${(1 / HOUR_ROWS.length) * 100}%`,
@@ -647,44 +656,44 @@ export default function PitchDiary({
                               top: `${topPercent}%`,
                               height: `${heightPercent}%`,
                             }}
-                            className={`absolute left-1 right-1 z-20 p-2.5 rounded-xl border text-left shadow-sm hover:shadow-md transition-all flex flex-col justify-between overflow-hidden group/bookingcard ${
+                            className={`absolute left-1 right-1 z-20 p-2.5 rounded-xl border text-left shadow-sm hover:shadow-md hover:z-50 transition-all flex flex-col justify-between group/bookingcard ${
                               booking.status === BookingStatus.APPROVED
                                 ? 'bg-emerald-50 border-emerald-300 text-emerald-950 shadow-emerald-50/30 hover:bg-emerald-100/90'
                                 : 'bg-amber-50 border-amber-300 text-amber-950 shadow-amber-50/30 hover:bg-amber-100/90'
                             }`}
-                            title={tooltipText}
                           >
+                            {/* Beautiful design box pop-out tooltip on hover of the card */}
+                            <div className="pointer-events-none absolute z-50 bottom-[102%] left-1/2 -translate-x-1/2 mb-1 w-64 bg-slate-900 text-white text-[11px] rounded-xl p-3.5 shadow-2xl border border-slate-800 opacity-0 scale-95 group-hover/bookingcard:opacity-100 group-hover/bookingcard:scale-100 transition-all duration-200 ease-out text-left select-none">
+                              <div className="space-y-2">
+                                <div className="border-b border-slate-800 pb-1 flex justify-between items-center">
+                                  <span className="font-extrabold text-[9px] uppercase tracking-wider text-blue-400">Booking Details</span>
+                                  <span className={`text-[8px] px-1.5 py-0.5 rounded font-bold uppercase ${booking.status === BookingStatus.APPROVED ? 'bg-emerald-900/50 text-emerald-300' : 'bg-amber-900/50 text-amber-300'}`}>{booking.status}</span>
+                                </div>
+                                <p className="font-black text-white text-xs leading-snug">{booking.teamName}</p>
+                                <div className="space-y-1 text-slate-300 font-medium font-sans">
+                                  <p><strong className="text-slate-500">Booked by:</strong> {booking.managerName}</p>
+                                  <p><strong className="text-slate-500">Date & Time:</strong> {new Date(booking.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} from {booking.timeSlot} to {resolvedEndTime}</p>
+                                  <p><strong className="text-slate-500">Submitted:</strong> {new Date(booking.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} at {new Date(booking.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
+                                  {booking.bookingType && (
+                                    <p><strong className="text-slate-500">Format:</strong> {booking.bookingType === 'MATCH' ? 'Match / Friendly (1h 15m)' : 'Standard Slot (1h)'}</p>
+                                  )}
+                                  {booking.notes && (
+                                    <div className="italic text-slate-400 mt-1 bg-slate-950/60 p-2 rounded-lg border border-slate-800 text-[10px] font-sans leading-relaxed">
+                                      "{booking.notes}"
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-900" />
+                            </div>
+
                             <div className="space-y-1 overflow-hidden">
                               <div className="flex justify-between items-start gap-1">
                                 <div className="flex items-center space-x-1 min-w-0">
                                   <p className="text-[11px] font-black leading-tight text-slate-900 truncate">
                                     {booking.teamName}
                                   </p>
-                                  {/* Info Trigger with Custom Overlay Tooltip on Hover */}
-                                  <div className="relative group/tooltip inline-block flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                                    <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 cursor-help transition-colors" />
-                                    {/* Tooltip Content positioned relative to the card to stay fully visible */}
-                                    <div className="pointer-events-none absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-slate-900 text-white text-[11px] rounded-xl p-3.5 shadow-2xl border border-slate-800 opacity-0 group-hover/tooltip:opacity-100 transition-opacity duration-150 ease-out text-left">
-                                      <div className="space-y-2">
-                                        <div className="border-b border-slate-800 pb-1 flex justify-between items-center">
-                                          <span className="font-extrabold text-[9px] uppercase tracking-wider text-blue-400">Booking Details</span>
-                                          <span className="text-[8px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-bold uppercase">{booking.status}</span>
-                                        </div>
-                                        <p className="font-black text-white text-xs leading-snug">{booking.teamName}</p>
-                                        <div className="space-y-1 text-slate-300 font-medium font-sans">
-                                          <p><strong className="text-slate-500">Booked by:</strong> {booking.managerName}</p>
-                                          <p><strong className="text-slate-500">Date & Time:</strong> {new Date(booking.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} from {booking.timeSlot} to {resolvedEndTime}</p>
-                                          <p><strong className="text-slate-500">Submitted:</strong> {new Date(booking.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} at {new Date(booking.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
-                                          {booking.notes && (
-                                            <div className="italic text-slate-400 mt-1 bg-slate-950/50 p-2 rounded-lg border border-slate-800 text-[10px] font-sans">
-                                              "{booking.notes}"
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-900" />
-                                    </div>
-                                  </div>
+                                  <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 transition-colors flex-shrink-0" />
                                 </div>
                                 <span className={`inline-flex items-center text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider ${
                                   booking.status === BookingStatus.APPROVED ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-850 animate-pulse'

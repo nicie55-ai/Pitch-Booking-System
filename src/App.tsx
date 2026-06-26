@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Calendar, ClipboardList, Settings, Shield, User, HelpCircle, CheckCircle, Info } from 'lucide-react';
+import { Calendar, ClipboardList, Settings, Shield, User, HelpCircle, CheckCircle, Info, X } from 'lucide-react';
 
 import { Booking, BookingStatus, PitchConfig, PitchSize, SlotChangeRequest, User as UserType } from './types';
 import { DEFAULT_PITCH_CONFIGS, INITIAL_BOOKINGS, INITIAL_SLOT_CHANGES, MOCK_USERS } from './mockData';
@@ -15,6 +15,7 @@ import PitchDiary from './components/PitchDiary';
 import RequestManager from './components/RequestManager';
 import SlotConfigurator from './components/SlotConfigurator';
 import BookingModal from './components/BookingModal';
+import CoachesSetup from './components/CoachesSetup';
 
 export default function App() {
   // Load initial state from LocalStorage or mock data
@@ -41,6 +42,14 @@ export default function App() {
     }));
   });
 
+  const [users, setUsers] = useState<UserType[]>(() => {
+    const saved = localStorage.getItem('scotter_jfc_users');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+    return MOCK_USERS;
+  });
+
   const [currentUser, setCurrentUser] = useState<UserType>(() => {
     const saved = localStorage.getItem('scotter_jfc_current_user');
     // Default to Paul Scholes (U9 Manager) to give a nice interactive starting point
@@ -53,7 +62,7 @@ export default function App() {
 
   // Default Selected Date: Saturday, June 27th, 2026 (populated with mock bookings)
   const [selectedDate, setSelectedDate] = useState('2026-06-27');
-  const [activeTab, setActiveTab] = useState<'DIARY' | 'REQUESTS' | 'SLOTS'>('DIARY');
+  const [activeTab, setActiveTab] = useState<'DIARY' | 'REQUESTS' | 'SLOTS' | 'COACHES'>('DIARY');
 
   // Booking Modal States
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
@@ -63,6 +72,22 @@ export default function App() {
     notes?: string;
     bookingId?: string;
   }>({});
+
+  const [bookingConfirmation, setBookingConfirmation] = useState<{
+    show: boolean;
+    message: string;
+    type: 'success' | 'info';
+  } | null>(null);
+
+  // Auto-dismiss booking confirmation after 6 seconds
+  useEffect(() => {
+    if (bookingConfirmation?.show) {
+      const timer = setTimeout(() => {
+        setBookingConfirmation(null);
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [bookingConfirmation]);
 
   // Sync state to LocalStorage
   useEffect(() => {
@@ -81,8 +106,19 @@ export default function App() {
     localStorage.setItem('scotter_jfc_current_user', JSON.stringify(currentUser));
   }, [currentUser]);
 
+  useEffect(() => {
+    localStorage.setItem('scotter_jfc_users', JSON.stringify(users));
+  }, [users]);
+
   // Handle persona switching
   const handleUserChange = (user: UserType) => {
+    if (user.password) {
+      const entered = prompt(`Enter password for coach ${user.name}:`);
+      if (entered !== user.password) {
+        alert('Incorrect password!');
+        return;
+      }
+    }
     setCurrentUser(user);
   };
 
@@ -103,6 +139,7 @@ export default function App() {
     notes: string;
     teamName?: string;
     endTime?: string;
+    bookingType?: 'STANDARD' | 'MATCH';
   }) => {
     if (modalPrefills.bookingId) {
       // UPDATE/RE-BOOK EXISTING BOOKING
@@ -115,12 +152,22 @@ export default function App() {
                 date: data.date,
                 timeSlot: data.timeSlot,
                 endTime: data.endTime,
+                bookingType: data.bookingType,
                 notes: data.notes,
                 status: currentUser.role === 'ADMIN' ? BookingStatus.APPROVED : BookingStatus.PENDING,
               }
             : b
         )
       );
+
+      setBookingConfirmation({
+        show: true,
+        message: currentUser.role === 'ADMIN'
+          ? "Booking has been successfully updated and auto-approved."
+          : "Your booking update has been successfully submitted and sent to the admin for approval.",
+        type: currentUser.role === 'ADMIN' ? 'success' : 'info',
+      });
+
       setIsBookingModalOpen(false);
       setModalPrefills({});
       return;
@@ -132,6 +179,7 @@ export default function App() {
       date: data.date,
       timeSlot: data.timeSlot,
       endTime: data.endTime,
+      bookingType: data.bookingType,
       teamName: data.teamName || (currentUser.role === 'ADMIN' ? 'Club Booking' : (currentUser.teamName || 'Club Team')),
       managerName: currentUser.name,
       managerId: currentUser.id,
@@ -141,6 +189,14 @@ export default function App() {
     };
 
     setBookings((prev) => [newBooking, ...prev]);
+
+    setBookingConfirmation({
+      show: true,
+      message: currentUser.role === 'ADMIN'
+        ? "Booking has been successfully created and auto-approved."
+        : "Your booking request has been successfully submitted and sent to the admin for approval.",
+      type: currentUser.role === 'ADMIN' ? 'success' : 'info',
+    });
   };
 
   // Approve Booking Request
@@ -258,6 +314,7 @@ export default function App() {
       localStorage.removeItem('scotter_jfc_pitch_configs');
       localStorage.removeItem('scotter_jfc_slot_changes');
       localStorage.removeItem('scotter_jfc_current_user');
+      localStorage.removeItem('scotter_jfc_users');
       window.location.reload();
     }
   };
@@ -273,7 +330,7 @@ export default function App() {
       {/* Club Banner Header */}
       <Header
         currentUser={currentUser}
-        users={MOCK_USERS}
+        users={users}
         onUserChange={handleUserChange}
       />
 
@@ -354,6 +411,18 @@ export default function App() {
               </span>
             )}
           </button>
+
+          <button
+            onClick={() => setActiveTab('COACHES')}
+            className={`flex items-center space-x-2 py-3 px-5 border-b-4 font-bold text-sm tracking-tight transition-all relative whitespace-nowrap ${
+              activeTab === 'COACHES'
+                ? 'border-blue-900 text-blue-900'
+                : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+            }`}
+          >
+            <User className="w-4 h-4" />
+            <span>Coaches & Profiles</span>
+          </button>
         </div>
 
         {/* Dynamic Tab Panel */}
@@ -379,6 +448,8 @@ export default function App() {
                   onCancelBooking={handleCancelBooking}
                   onAddBookingsBulk={handleAddBookingsBulk}
                   onUpdateBooking={handleUpdateBooking}
+                  users={users}
+                  onUpdateUsers={setUsers}
                 />
               )}
 
@@ -401,6 +472,15 @@ export default function App() {
                   onSubmitSlotChangeRequest={handleSubmitSlotChangeRequest}
                   onApproveSlotChange={handleApproveSlotChange}
                   onDeclineSlotChange={handleDeclineSlotChange}
+                />
+              )}
+
+              {activeTab === 'COACHES' && (
+                <CoachesSetup
+                  users={users}
+                  onUpdateUsers={setUsers}
+                  currentUser={currentUser}
+                  onUpdateCurrentUser={setCurrentUser}
                 />
               )}
             </motion.div>
@@ -482,6 +562,44 @@ export default function App() {
             existingBookings={bookings}
             currentUser={currentUser}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Booking confirmation alert */}
+      <AnimatePresence>
+        {bookingConfirmation?.show && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-6 left-1/2 -translate-x-1/2 z-[999] max-w-md w-full px-4"
+          >
+            <div className={`p-4 rounded-2xl border-2 shadow-2xl flex items-start gap-3 bg-white ${
+              bookingConfirmation.type === 'success' 
+                ? 'border-emerald-200 text-slate-800' 
+                : 'border-blue-200 text-slate-800'
+            }`}>
+              {bookingConfirmation.type === 'success' ? (
+                <CheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+              ) : (
+                <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+              )}
+              <div className="flex-1">
+                <p className="text-xs font-black text-slate-900 uppercase tracking-wider mb-0.5">
+                  {bookingConfirmation.type === 'success' ? 'Booking Saved' : 'Request Sent'}
+                </p>
+                <p className="text-xs text-slate-600 font-bold leading-normal">
+                  {bookingConfirmation.message}
+                </p>
+              </div>
+              <button 
+                onClick={() => setBookingConfirmation(null)}
+                className="text-slate-400 hover:text-slate-600 transition-colors p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

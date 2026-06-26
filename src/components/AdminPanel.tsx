@@ -21,7 +21,11 @@ import {
   ArrowRight,
   Sparkles,
   Info,
-  Trash2
+  Trash2,
+  Wand2,
+  CheckCircle,
+  Key,
+  ShieldAlert
 } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, PitchConfig, User } from '../types';
 import { SCOTTER_TEAMS, MOCK_FA_FULLTIME_FIXTURES, FAFixture, ClubTeam } from '../mockData';
@@ -36,6 +40,8 @@ interface AdminPanelProps {
   onUpdateBooking?: (id: string, fields: Partial<Booking>) => void;
   currentUser: User;
   onRequestBooking?: (pitchId: PitchSize, slot: string, notes?: string, date?: string, existingBookingId?: string) => void;
+  users?: User[];
+  onUpdateUsers?: (newUsers: User[]) => void;
 }
 
 export default function AdminPanel({
@@ -47,11 +53,11 @@ export default function AdminPanel({
   onUpdateBooking,
   currentUser,
   onRequestBooking,
+  users = [],
+  onUpdateUsers,
 }: AdminPanelProps) {
-  // Admins see BLOCK first, Managers see FULLTIME first
-  const [activeSubTab, setActiveSubTab] = useState<'BLOCK' | 'FULLTIME'>(
-    currentUser.role === 'ADMIN' ? 'BLOCK' : 'FULLTIME'
-  );
+  // Default to FULLTIME (Fixtures Loader) for both Admin and Managers
+  const [activeSubTab, setActiveSubTab] = useState<'BLOCK' | 'FULLTIME'>('FULLTIME');
 
   // Block booking state
   const [selectedTeam, setSelectedTeam] = useState<string>('');
@@ -73,6 +79,21 @@ export default function AdminPanel({
   const [faFixturesLoaded, setFaFixturesLoaded] = useState<boolean>(false);
   const [loadedFixtures, setLoadedFixtures] = useState<FAFixture[]>([]);
   const [importFeedback, setImportFeedback] = useState<string | null>(null);
+
+  // Coach Setup Form State
+  const [newCoachName, setNewCoachName] = useState('');
+  const [newCoachPassword, setNewCoachPassword] = useState('');
+  const [newCoachTeam, setNewCoachTeam] = useState('');
+  const [newCoachRole, setNewCoachRole] = useState<'MANAGER' | 'ADMIN'>('MANAGER');
+  const [coachError, setCoachError] = useState<string | null>(null);
+  const [coachSuccess, setCoachSuccess] = useState<string | null>(null);
+
+  // Copy & Paste fixtures state
+  const [pasteText, setPasteText] = useState('');
+  const [parsedFixtures, setParsedFixtures] = useState<FAFixture[]>([]);
+  const [selectedParsedIds, setSelectedParsedIds] = useState<string[]>([]);
+  const [bulkRemapTeam, setBulkRemapTeam] = useState('');
+  const [fulltimeMode, setFulltimeMode] = useState<'PASTE' | 'API'>('PASTE');
 
   // FA Filters & Checkbox Selections
   const [faFilterTeam, setFaFilterTeam] = useState<string>('');
@@ -484,6 +505,468 @@ export default function AdminPanel({
     setImportFeedback(`Successfully batch unbooked ${count} selected fixtures from the Pitch Diary!`);
   };
 
+  // Coach management handlers
+  const handleAddCoach = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCoachError(null);
+    setCoachSuccess(null);
+
+    if (!newCoachName.trim()) {
+      setCoachError('Coach name is required.');
+      return;
+    }
+
+    if (!newCoachPassword.trim()) {
+      setCoachError('Password is required.');
+      return;
+    }
+
+    if (!onUpdateUsers) {
+      setCoachError('User updating is not configured in the application state.');
+      return;
+    }
+
+    // Check if name already exists
+    if (users.some(u => u.name.toLowerCase() === newCoachName.trim().toLowerCase())) {
+      setCoachError(`An account with the name "${newCoachName}" already exists.`);
+      return;
+    }
+
+    const newCoach: User = {
+      id: `coach-${Date.now()}`,
+      name: newCoachName.trim(),
+      role: newCoachRole,
+      teamName: newCoachRole === 'MANAGER' ? (newCoachTeam || undefined) : undefined,
+      password: newCoachPassword.trim(),
+    };
+
+    onUpdateUsers([...users, newCoach]);
+    setCoachSuccess(`Coach "${newCoach.name}" successfully setup with password!`);
+    
+    // Clear inputs
+    setNewCoachName('');
+    setNewCoachPassword('');
+    setNewCoachTeam('');
+    setNewCoachRole('MANAGER');
+  };
+
+  const handleDeleteCoach = (id: string) => {
+    if (id === currentUser.id) {
+      alert('You cannot delete your own logged-in admin account!');
+      return;
+    }
+    if (confirm('Are you sure you want to delete this coach account?')) {
+      if (onUpdateUsers) {
+        onUpdateUsers(users.filter((u) => u.id !== id));
+        setCoachSuccess('Coach account successfully deleted.');
+      }
+    }
+  };
+
+  // Paste Fixtures parser & helpers
+  const findBestTeamMatch = (pastedName: string): string => {
+    const cleanWord = (wd: string) => wd.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/s$/, ''); // normalize "u10s" -> "u10"
+    
+    const normalized = pastedName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!normalized) return SCOTTER_TEAMS[0].name;
+
+    // First, let's check for exact word combinations
+    for (const team of SCOTTER_TEAMS) {
+      const tName = team.name.toLowerCase();
+      const tNorm = tName.replace(/[^a-z0-9]/g, '');
+      if (tNorm === normalized) {
+        return team.name;
+      }
+    }
+
+    // Overlap matching
+    let bestMatch = '';
+    let highestScore = 0;
+    const pastedWords = pastedName.toLowerCase().split(/\s+/).map(cleanWord).filter(Boolean);
+
+    for (const team of SCOTTER_TEAMS) {
+      const teamWords = team.name.toLowerCase().split(/\s+/).map(cleanWord).filter(Boolean);
+      let score = 0;
+
+      pastedWords.forEach((pw) => {
+        teamWords.forEach((tw) => {
+          if (tw === pw || tw.includes(pw) || pw.includes(tw)) {
+            score += 1;
+            // Heavy weight for matching age groups (like u7, u10)
+            if (pw.match(/^u\d+$/) || pw.match(/^under\d+$/)) {
+              score += 15;
+            }
+            // Suffix formats weights (saints, juniors, colts, girls)
+            if (pw === 'saints' || pw === 'juniors' || pw === 'junior' || pw === 'colts' || pw === 'girls') {
+              score += 5;
+            }
+          }
+        });
+      });
+
+      if (score > highestScore) {
+        highestScore = score;
+        bestMatch = team.name;
+      }
+    }
+
+    return bestMatch || SCOTTER_TEAMS[0].name;
+  };
+
+  const isNameMismatch = (fixture: FAFixture) => {
+    const original = fixture.homeTeam.replace(/^Scotter\s+(United\s+)?/i, '').trim().toLowerCase();
+    const mapped = fixture.scotterTeam.replace(/^Scotter\s+(United\s+)?/i, '').trim().toLowerCase();
+    return original !== mapped;
+  };
+
+  const handleParsePastedFixtures = () => {
+    if (!pasteText.trim()) {
+      setImportFeedback('Please paste some fixture text first.');
+      return;
+    }
+
+    const lines = pasteText.split('\n').map((l) => l.trim()).filter(Boolean);
+    const parsed: FAFixture[] = [];
+    const defaultSlotCount: Record<string, number> = {};
+
+    const pitchSlots: Record<string, string[]> = {
+      '5v5': ['09:30', '10:45', '12:00', '13:15'],
+      '7v7': ['09:30', '10:45', '12:00', '13:15'],
+      '9v9': ['09:30', '10:45', '12:00', '13:15'],
+      '11v11': ['10:00', '12:00', '14:00', '16:00'],
+    };
+
+    lines.forEach((line, idx) => {
+      const lower = line.toLowerCase();
+      // Skip header lines
+      if (lower.includes('home team') && lower.includes('away team')) return;
+      if (lower.startsWith('date\t') || lower.startsWith('time\t')) return;
+
+      let date = selectedDate;
+      let timeSlot = '09:30';
+      let hasExplicitTime = false;
+      let homeTeam = '';
+      let awayTeam = '';
+      let competition = 'FA League Match';
+
+      // 1. Regex for DD/MM/YYYY or YYYY-MM-DD
+      const dateRegex = /(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})/;
+      const dateMatch = line.match(dateRegex);
+      if (dateMatch) {
+        let day = dateMatch[1].padStart(2, '0');
+        let month = dateMatch[2].padStart(2, '0');
+        let year = dateMatch[3];
+        if (year.length === 2) year = '20' + year;
+        date = `${year}-${month}-${day}`;
+        line = line.replace(dateMatch[0], ' ');
+      } else {
+        const writtenDateRegex = /(\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*/i;
+        const writtenMatch = line.match(writtenDateRegex);
+        if (writtenMatch) {
+          const day = parseInt(writtenMatch[1], 10);
+          const monthStr = writtenMatch[2].toLowerCase();
+          const months: Record<string, string> = {
+            jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+            jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+          };
+          const month = months[monthStr];
+          date = `2026-${month}-${String(day).padStart(2, '0')}`;
+          line = line.replace(writtenMatch[0], ' ');
+        }
+      }
+
+      // 2. Regex for HH:MM
+      const timeRegex = /(\d{1,2}):(\d{2})/;
+      const timeMatch = line.match(timeRegex);
+      if (timeMatch) {
+        timeSlot = `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`;
+        line = line.replace(timeMatch[0], ' ');
+        hasExplicitTime = true;
+      }
+
+      // 3. Teams extraction
+      const tabs = line.split('\t').map((t) => t.trim()).filter(Boolean);
+      
+      const vsIdx = tabs.findIndex(t => {
+        const tl = t.toLowerCase();
+        return tl === 'vs' || tl === 'v' || /\b(vs|v)\b/i.test(t);
+      });
+      
+      if (vsIdx !== -1) {
+        // We found a VS separator column!
+        const vsTab = tabs[vsIdx];
+        let extraHomeWord = '';
+        let extraAwayWord = '';
+        
+        const vsPattern = /\b(vs|v)\b/i;
+        const vsMatch = vsTab.match(vsPattern);
+        if (vsMatch) {
+          const vsText = vsMatch[0];
+          const vsWordIdx = vsTab.toLowerCase().indexOf(vsText.toLowerCase());
+          if (vsWordIdx > 0) {
+            extraHomeWord = vsTab.substring(0, vsWordIdx).trim();
+          }
+          if (vsWordIdx + vsText.length < vsTab.length) {
+            extraAwayWord = vsTab.substring(vsWordIdx + vsText.length).trim();
+          }
+        }
+
+        // Home team is to the left of vsIdx
+        for (let i = vsIdx - 1; i >= 0; i--) {
+          const t = tabs[i];
+          const tl = t.toLowerCase();
+          if (t && tl !== 'cup' && tl !== 'league' && tl !== 'vs' && tl !== 'v' && !tl.includes('divisional') && !tl.includes('division') && !tl.includes('trophy')) {
+            homeTeam = t;
+            break;
+          }
+        }
+        // Away team is to the right of vsIdx
+        for (let i = vsIdx + 1; i < tabs.length; i++) {
+          const t = tabs[i];
+          const tl = t.toLowerCase();
+          // Skip venue indicators or competitions
+          if (t && tl !== 'vs' && tl !== 'v' && !tl.includes('park') && !tl.includes('ground') && !tl.includes('field') && !tl.includes('stadium') && !tl.includes('cup') && !tl.includes('league') && !tl.includes('divisional') && !tl.includes('division') && !tl.includes('trophy')) {
+            awayTeam = t;
+            break;
+          }
+        }
+        
+        // Fallbacks if not found
+        if (!homeTeam) homeTeam = tabs[vsIdx - 1] || 'Home Team';
+        if (!awayTeam) awayTeam = tabs[vsIdx + 1] || 'Away Team';
+        
+        // Merge the extra words if found
+        if (extraHomeWord && !homeTeam.toLowerCase().includes(extraHomeWord.toLowerCase())) {
+          homeTeam = `${homeTeam} ${extraHomeWord}`;
+        }
+        if (extraAwayWord && !awayTeam.toLowerCase().includes(extraAwayWord.toLowerCase())) {
+          awayTeam = `${extraAwayWord} ${awayTeam}`;
+        }
+        
+        // Competition finding
+        const compTab = tabs.find(t => {
+          const tl = t.toLowerCase();
+          return tl !== homeTeam.toLowerCase() && tl !== awayTeam.toLowerCase() && (tl.includes('cup') || tl.includes('league') || tl.includes('divisional') || tl.includes('division') || tl.includes('trophy'));
+        });
+        if (compTab) {
+          competition = compTab;
+        } else if (tabs.length > vsIdx + 2) {
+          competition = tabs[tabs.length - 1];
+        }
+      } else {
+        // No explicit "VS" tab, check if there is a VS/against/v inside any tab
+        const vsSeparatorRegex = /\s+(vs|v|against|-)\s+/i;
+        let vsTabIdx = tabs.findIndex(t => vsSeparatorRegex.test(t));
+        
+        if (vsTabIdx !== -1) {
+          const parts = tabs[vsTabIdx].split(vsSeparatorRegex);
+          homeTeam = parts[0].trim();
+          let rawAway = parts[parts.length - 1].trim();
+          const parenMatch = rawAway.match(/\(([^)]+)\)/);
+          if (parenMatch) {
+            competition = parenMatch[1];
+            rawAway = rawAway.replace(/\([^)]+\)/, '').trim();
+          }
+          awayTeam = rawAway;
+          
+          const otherTabs = tabs.filter((_, idx) => idx !== vsTabIdx);
+          const compTab = otherTabs.find(t => t.toLowerCase().includes('cup') || t.toLowerCase().includes('league') || t.toLowerCase().includes('division'));
+          if (compTab) competition = compTab;
+        } else if (tabs.length >= 2) {
+          // If no VS separator is found, but we have multiple tabs:
+          // Check if one of them contains "scotter"
+          const scotterIdx = tabs.findIndex(t => t.toLowerCase().includes('scotter'));
+          if (scotterIdx !== -1) {
+            homeTeam = tabs[scotterIdx];
+            // Away team is probably the next tab, or previous tab
+            if (scotterIdx + 1 < tabs.length && !tabs[scotterIdx + 1].toLowerCase().includes('park') && !tabs[scotterIdx + 1].toLowerCase().includes('cup')) {
+              awayTeam = tabs[scotterIdx + 1];
+            } else if (scotterIdx - 1 >= 0) {
+              awayTeam = tabs[scotterIdx - 1];
+            } else {
+              awayTeam = tabs[scotterIdx === 0 ? 1 : 0];
+            }
+          } else {
+            homeTeam = tabs[0];
+            awayTeam = tabs[1];
+          }
+          if (tabs[2]) competition = tabs[2];
+        } else {
+          // Fallback to splitting by general space if there is "vs"
+          const vsSeparatorRegex = /\s+(vs|v|against|-)\s+/i;
+          const vsMatch = line.match(vsSeparatorRegex);
+          if (vsMatch) {
+            const parts = line.split(vsSeparatorRegex);
+            homeTeam = parts[0].trim();
+            let rawAway = parts[parts.length - 1].trim();
+            const parenMatch = rawAway.match(/\(([^)]+)\)/);
+            if (parenMatch) {
+              competition = parenMatch[1];
+              rawAway = rawAway.replace(/\([^)]+\)/, '').trim();
+            }
+            awayTeam = rawAway;
+          } else {
+            homeTeam = line.trim();
+            awayTeam = 'TBD opponent';
+          }
+        }
+      }
+
+      homeTeam = homeTeam.replace(/^Scotter\s+(United\s+)?/i, '').trim();
+      awayTeam = awayTeam.replace(/^Scotter\s+(United\s+)?/i, '').trim();
+
+      if (homeTeam && homeTeam.toLowerCase() !== 'home' && homeTeam.toLowerCase() !== 'home team') {
+        const suggestedTeam = findBestTeamMatch(homeTeam);
+        const teamObj = SCOTTER_TEAMS.find((t) => t.name === suggestedTeam);
+        const pitchId = teamObj ? teamObj.pitchSize : '11v11';
+
+        if (!hasExplicitTime) {
+          const slotKey = `${date}_${pitchId}`;
+          const currentCount = defaultSlotCount[slotKey] || 0;
+          const slots = pitchSlots[pitchId] || ['09:30', '10:45', '12:00'];
+          timeSlot = slots[currentCount % slots.length];
+          defaultSlotCount[slotKey] = currentCount + 1;
+        }
+
+        parsed.push({
+          id: `fa-pasted-${Date.now()}-${idx}`,
+          date,
+          timeSlot,
+          pitchId,
+          homeTeam,
+          awayTeam,
+          competition,
+          scotterTeam: suggestedTeam,
+        });
+      }
+    });
+
+    if (parsed.length === 0) {
+      setImportFeedback('Error: Could not parse any fixtures from the pasted text. Please verify the format (e.g. tab-separated, vs separators, dates, times).');
+    } else {
+      setParsedFixtures(parsed);
+      setSelectedParsedIds(parsed.map((p) => p.id));
+      setImportFeedback(`Successfully parsed ${parsed.length} fixtures! Check the home team name-mappings and tick checkboxes below to bulk import.`);
+    }
+  };
+
+  const handleBulkRemap = () => {
+    if (!bulkRemapTeam) {
+      setImportFeedback('Please select a team to bulk remap to.');
+      return;
+    }
+    if (selectedParsedIds.length === 0) {
+      setImportFeedback('Please tick/check at least one fixture to bulk remap.');
+      return;
+    }
+
+    const teamObj = SCOTTER_TEAMS.find((t) => t.name === bulkRemapTeam);
+    const pitchId = teamObj ? teamObj.pitchSize : '11v11';
+
+    setParsedFixtures((prev) =>
+      prev.map((f) => {
+        if (selectedParsedIds.includes(f.id)) {
+          return {
+            ...f,
+            scotterTeam: bulkRemapTeam,
+            pitchId: pitchId,
+          };
+        }
+        return f;
+      })
+    );
+
+    setImportFeedback(`Successfully bulk remapped ${selectedParsedIds.length} ticked fixture(s) to "${bulkRemapTeam}".`);
+  };
+
+  const handleIndividualRemap = (id: string, teamName: string) => {
+    const teamObj = SCOTTER_TEAMS.find((t) => t.name === teamName);
+    const pitchId = teamObj ? teamObj.pitchSize : '11v11';
+
+    setParsedFixtures((prev) =>
+      prev.map((f) => {
+        if (f.id === id) {
+          return {
+            ...f,
+            scotterTeam: teamName,
+            pitchId: pitchId,
+          };
+        }
+        return f;
+      })
+    );
+  };
+
+  const handleImportParsedFixtures = () => {
+    const selectedToBook = parsedFixtures.filter((f) => selectedParsedIds.includes(f.id));
+    if (selectedToBook.length === 0) {
+      setImportFeedback('Error: No checked fixtures to import.');
+      return;
+    }
+
+    // Check for clashes
+    const clashDates: string[] = [];
+    const newBookings: Booking[] = [];
+
+    selectedToBook.forEach((f, idx) => {
+      const clash = bookings.find(
+        (b) =>
+          b.pitchId === f.pitchId &&
+          b.date === f.date &&
+          b.timeSlot === f.timeSlot &&
+          b.status !== BookingStatus.DECLINED
+      );
+
+      if (clash) {
+        clashDates.push(`${f.date} @ ${f.timeSlot} (${clash.teamName} on ${f.pitchId})`);
+      } else {
+        newBookings.push({
+          id: `b-pasted-import-${Date.now()}-${idx}`,
+          pitchId: f.pitchId,
+          date: f.date,
+          timeSlot: f.timeSlot,
+          teamName: f.scotterTeam,
+          managerName: currentUser.name,
+          managerId: 'fa-auto-import',
+          notes: `[FA Copy & Paste Import] ${f.competition}: ${f.homeTeam} vs ${f.awayTeam}`,
+          status: BookingStatus.APPROVED,
+          createdAt: new Date().toISOString(),
+        });
+      }
+    });
+
+    if (newBookings.length > 0) {
+      onAddBookingsBulk(newBookings);
+    }
+
+    if (clashDates.length > 0) {
+      setImportFeedback(
+        `Partial Import: Successfully booked ${newBookings.length} match(es) in the Pitch Diary. Skipped ${clashDates.length} clash(es): ${clashDates.join(', ')}.`
+      );
+    } else {
+      setImportFeedback(`Successfully imported and booked ${newBookings.length} match(es) directly into the Pitch Diary!`);
+    }
+    
+    // Clear state
+    setParsedFixtures([]);
+    setSelectedParsedIds([]);
+    setPasteText('');
+  };
+
+  const toggleParsedSelection = (id: string) => {
+    setSelectedParsedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllParsed = () => {
+    if (selectedParsedIds.length === parsedFixtures.length) {
+      setSelectedParsedIds([]);
+    } else {
+      setSelectedParsedIds(parsedFixtures.map((p) => p.id));
+    }
+  };
+
   const selectedPitchConfig = pitchConfigs.find((p) => p.id === pitchSize);
   const slotsAvailable = selectedPitchConfig ? selectedPitchConfig.defaultSlots : [];
 
@@ -511,6 +994,17 @@ export default function AdminPanel({
         {currentUser.role === 'ADMIN' && (
           <div className="flex space-x-1 bg-blue-950/80 p-1 rounded-xl border border-blue-800/40">
             <button
+              onClick={() => setActiveSubTab('FULLTIME')}
+              className={`flex items-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${
+                activeSubTab === 'FULLTIME'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              <span>Fixtures Loader</span>
+            </button>
+            <button
               onClick={() => setActiveSubTab('BLOCK')}
               className={`flex items-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${
                 activeSubTab === 'BLOCK'
@@ -521,17 +1015,6 @@ export default function AdminPanel({
               <CalendarRange className="w-3.5 h-3.5" />
               <span>Block Book Tool</span>
             </button>
-            <button
-              onClick={() => setActiveSubTab('FULLTIME')}
-              className={`flex items-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${
-                activeSubTab === 'FULLTIME'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              <FileDown className="w-3.5 h-3.5" />
-              <span>FA Full-Time Loader</span>
-            </button>
           </div>
         )}
       </div>
@@ -539,7 +1022,7 @@ export default function AdminPanel({
       {/* Panel Inner Content */}
       <div className="p-6">
         <AnimatePresence mode="wait">
-          {activeSubTab === 'BLOCK' ? (
+          {activeSubTab === 'BLOCK' && (
             <motion.div
               key="block"
               initial={{ opacity: 0, y: 10 }}
@@ -845,7 +1328,9 @@ export default function AdminPanel({
                 </div>
               </form>
             </motion.div>
-          ) : (
+          )}
+
+          {activeSubTab === 'FULLTIME' && (
             <motion.div
               key="fulltime"
               initial={{ opacity: 0, y: 10 }}
@@ -854,7 +1339,235 @@ export default function AdminPanel({
               transition={{ duration: 0.15 }}
               className="space-y-6"
             >
-              {/* FA Search control */}
+              {/* Inner Full-Time Mode Selector */}
+              <div className="flex border-b border-slate-800 pb-px gap-1">
+                <button
+                  onClick={() => setFulltimeMode('PASTE')}
+                  className={`py-2 px-4 text-xs font-bold border-b-2 transition-all ${
+                    fulltimeMode === 'PASTE'
+                      ? 'border-blue-500 text-white font-extrabold'
+                      : 'border-transparent text-slate-400 hover:text-white'
+                  }`}
+                >
+                  📄 Copy & Paste Fixtures
+                </button>
+                <button
+                  onClick={() => setFulltimeMode('API')}
+                  className={`py-2 px-4 text-xs font-bold border-b-2 transition-all ${
+                    fulltimeMode === 'API'
+                      ? 'border-blue-500 text-white font-extrabold'
+                      : 'border-transparent text-slate-400 hover:text-white'
+                  }`}
+                >
+                  🌐 FA Full-Time Search Simulation
+                </button>
+              </div>
+
+              {fulltimeMode === 'PASTE' && (
+                <div className="space-y-6">
+                  <div className="bg-slate-800/20 border border-slate-800/80 p-5 rounded-xl space-y-4">
+                    <div>
+                      <h4 className="text-xs font-extrabold text-blue-400 uppercase tracking-wider">
+                        Copy & Paste Fixture List
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Paste rows of fixtures copy-pasted directly from your leagues' match calendars, sheets, or email. We will automatically parse dates, kickoff times, and suggest team name matches.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-[11px] font-bold text-slate-300">
+                        Paste Fixtures Data:
+                      </label>
+                      <textarea
+                        rows={6}
+                        value={pasteText}
+                        onChange={(e) => setPasteText(e.target.value)}
+                        placeholder={`Examples of format supported:
+U9 Juniors   vs   Lincoln United   (Sat 27th June 10:00)
+Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
+09:30   U12s Juniors   v   Bottesford Town   League Cup`
+                        }
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-slate-400 italic">
+                        Supported formats: tabs, VS separators, dates (DD/MM or Written), times (HH:MM).
+                      </span>
+                      <button
+                        onClick={handleParsePastedFixtures}
+                        className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold py-2 px-4 rounded-lg flex items-center space-x-1.5 shadow transition-all animate-pulse"
+                      >
+                        <Wand2 className="w-3.5 h-3.5" />
+                        <span>Parse & Match Teams</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Feedback Message */}
+                  {importFeedback && (
+                    <div className={`p-3.5 rounded-lg text-xs font-bold flex items-start space-x-2 border ${
+                      importFeedback.startsWith('Error')
+                        ? 'bg-red-950/70 border-red-900/60 text-red-300'
+                        : 'bg-emerald-950/70 border-emerald-900/60 text-emerald-300'
+                    }`}>
+                      <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                      <span>{importFeedback}</span>
+                    </div>
+                  )}
+
+                  {/* Parsed List Table and Remapper */}
+                  {parsedFixtures.length > 0 && (
+                    <div className="bg-slate-950/60 border border-slate-800 rounded-xl overflow-hidden space-y-4 p-5">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800 pb-4">
+                        <div>
+                          <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">
+                            Interactive Team Mapper & Import List
+                          </h4>
+                          <p className="text-[10px] text-slate-400">
+                            Verify mapped Scotter teams. Mismatches are flagged for easy correction before importing.
+                          </p>
+                        </div>
+
+                        {/* Bulk Remap Control */}
+                        <div className="flex items-center space-x-2 bg-slate-900 border border-slate-700 p-1.5 rounded-lg">
+                          <select
+                            value={bulkRemapTeam}
+                            onChange={(e) => setBulkRemapTeam(e.target.value)}
+                            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none"
+                          >
+                            <option value="">-- Bulk Map Selected To --</option>
+                            {SCOTTER_TEAMS.map((t) => (
+                              <option key={t.name} value={t.name}>
+                                {t.name} ({t.pitchSize})
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={handleBulkRemap}
+                            className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-1 px-3 rounded text-xs transition-colors"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Fixtures Table */}
+                      <div className="overflow-x-auto rounded-lg border border-slate-800">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="bg-slate-900 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                              <th className="py-2.5 px-3 w-10 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedParsedIds.length === parsedFixtures.length && parsedFixtures.length > 0}
+                                  onChange={toggleSelectAllParsed}
+                                  className="rounded text-blue-600 focus:ring-0 bg-slate-950 border-slate-700 cursor-pointer w-4 h-4"
+                                />
+                              </th>
+                              <th className="py-2.5 px-3">Date & Time</th>
+                              <th className="py-2.5 px-3">Pasted Home Team</th>
+                              <th className="py-2.5 px-3">Mapped Scotter Team (Suggestion)</th>
+                              <th className="py-2.5 px-3">Away Team</th>
+                              <th className="py-2.5 px-3 text-center">Pitch Format</th>
+                              <th className="py-2.5 px-3 text-center">Clash Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-900 text-xs text-slate-300">
+                            {parsedFixtures.map((f) => {
+                              const mismatch = isNameMismatch(f);
+                              const clash = bookings.find(
+                                (b) =>
+                                  b.pitchId === f.pitchId &&
+                                  b.date === f.date &&
+                                  b.timeSlot === f.timeSlot &&
+                                  b.status !== BookingStatus.DECLINED
+                              );
+
+                              return (
+                                <tr key={f.id} className={`hover:bg-slate-900/60 ${mismatch ? 'bg-amber-950/10' : ''}`}>
+                                  <td className="py-3 px-3 text-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedParsedIds.includes(f.id)}
+                                      onChange={() => toggleParsedSelection(f.id)}
+                                      className="rounded text-blue-600 focus:ring-0 bg-slate-950 border-slate-700 cursor-pointer w-4 h-4"
+                                    />
+                                  </td>
+                                  <td className="py-3 px-3 font-medium whitespace-nowrap">
+                                    <div className="text-white">{f.date}</div>
+                                    <div className="text-[10px] text-slate-400 font-bold">{f.timeSlot}</div>
+                                  </td>
+                                  <td className="py-3 px-3 font-semibold text-slate-200">
+                                    {f.homeTeam}
+                                  </td>
+                                  <td className="py-3 px-3">
+                                    <div className="flex flex-col gap-1">
+                                      <select
+                                        value={f.scotterTeam}
+                                        onChange={(e) => handleIndividualRemap(f.id, e.target.value)}
+                                        className={`bg-slate-900 border text-xs font-bold rounded-lg p-1.5 w-full text-white ${
+                                          mismatch ? 'border-amber-500 focus:border-amber-400' : 'border-slate-700 focus:border-blue-500'
+                                        }`}
+                                      >
+                                        {SCOTTER_TEAMS.map((t) => (
+                                          <option key={t.name} value={t.name}>
+                                            {t.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {mismatch && (
+                                        <span className="text-[9px] text-amber-400 font-black flex items-center gap-1">
+                                          ⚠️ Mismatched Name Suggested
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-3 text-slate-400 font-medium">
+                                    {f.awayTeam}
+                                  </td>
+                                  <td className="py-3 px-3 text-center whitespace-nowrap">
+                                    <span className="bg-slate-800 text-slate-300 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-slate-700">
+                                      {f.pitchId}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    {clash ? (
+                                      <span className="bg-red-950/80 text-red-400 border border-red-800 text-[9px] font-black uppercase px-2 py-0.5 rounded-md">
+                                        ❌ Clash: {clash.teamName}
+                                      </span>
+                                    ) : (
+                                      <span className="bg-emerald-950/80 text-emerald-400 border border-emerald-800 text-[9px] font-black uppercase px-2 py-0.5 rounded-md">
+                                        ✅ Vacant
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex justify-end pt-2">
+                        <button
+                          onClick={handleImportParsedFixtures}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold py-2.5 px-6 rounded-xl flex items-center space-x-2 shadow-md transition-all uppercase tracking-wider"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          <span>Import and Book {selectedParsedIds.length} Selected</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {fulltimeMode === 'API' && (
+                <>
+                  {/* FA Search control */}
               <div className="bg-slate-800/40 border border-slate-800 p-4 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4">
                 <div className="flex items-center space-x-3">
                   <div className="bg-blue-600 text-white rounded-lg p-2 font-bold text-sm tracking-tighter">
@@ -1299,8 +2012,11 @@ export default function AdminPanel({
                   </div>
                 </div>
               )}
+              </>
+            )}
             </motion.div>
           )}
+
         </AnimatePresence>
       </div>
     </div>

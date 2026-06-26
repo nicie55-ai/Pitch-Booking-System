@@ -46,25 +46,25 @@ const RAW_MOCK_USERS: User[] = [
 export const DEFAULT_PITCH_CONFIGS: PitchConfig[] = [
   {
     id: '5v5',
-    name: 'Mini Soccer Pitch (5v5)',
+    name: '5v5',
     description: 'Perfect for Under 7s and Under 8s matches.',
     defaultSlots: ['09:30', '10:45', '12:00'],
   },
   {
     id: '7v7',
-    name: 'Junior Pitch A (7v7)',
+    name: '7v7',
     description: 'Designed for Under 9s and Under 10s age groups.',
     defaultSlots: ['09:30', '10:45', '12:00'],
   },
   {
     id: '9v9',
-    name: 'Intermediate Pitch (9v9)',
+    name: '9v9',
     description: 'Designed for Under 11s and Under 12s age groups.',
     defaultSlots: ['09:30', '10:45', '12:00'],
   },
   {
     id: '11v11',
-    name: 'Main Show Pitch (11v11)',
+    name: '11v11',
     description: 'Full-size pitch for Under 13s to Adults.',
     defaultSlots: ['09:30', '10:45', '12:00'],
   },
