@@ -18,6 +18,7 @@ interface BookingModalProps {
     timeSlot: string;
     notes: string;
     teamName?: string;
+    endTime?: string;
   }) => void;
   selectedPitchId?: PitchSize;
   selectedDate?: string;
@@ -45,10 +46,42 @@ export default function BookingModal({
   const [pitchId, setPitchId] = useState<PitchSize>(selectedPitchId);
   const [date, setDate] = useState<string>(selectedDate);
   const [timeSlot, setTimeSlot] = useState<string>(selectedSlot);
+  const [endTime, setEndTime] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [adminSelectedTeam, setAdminSelectedTeam] = useState<string>('');
   const [isCustomTime, setIsCustomTime] = useState<boolean>(false);
+
+  // Helper to determine the standard end time for a given slot, date, and pitch format
+  const getEndTimeForSlot = (pId: PitchSize, dateStr: string, slot: string): string => {
+    if (!dateStr || !slot) return '';
+    const d = new Date(dateStr);
+    const day = d.getDay();
+    const isWeekend = day === 0 || day === 6;
+    if (isWeekend) {
+      if (pId === '11v11') {
+        if (slot === '10:00') return '12:00';
+        if (slot === '12:00') return '14:00';
+        const [hStr, mStr] = slot.split(':');
+        const h = parseInt(hStr, 10) + 2;
+        return `${String(h).padStart(2, '0')}:${mStr}`;
+      } else {
+        if (slot === '09:30') return '10:45';
+        if (slot === '10:45') return '12:00';
+        if (slot === '12:00') return '13:15';
+        
+        const [hStr, mStr] = slot.split(':');
+        const totalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10) + 75;
+        const h = Math.floor(totalMinutes / 60);
+        const m = totalMinutes % 60;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      }
+    } else {
+      const [hStr, mStr] = slot.split(':');
+      const h = parseInt(hStr, 10) + 1;
+      return `${String(h).padStart(2, '0')}:${mStr}`;
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -61,6 +94,7 @@ export default function BookingModal({
           const isCustom = existing.timeSlot && !pitchSlots.includes(existing.timeSlot);
           setIsCustomTime(!!isCustom);
           setTimeSlot(existing.timeSlot);
+          setEndTime(existing.endTime || getEndTimeForSlot(existing.pitchId, existing.date, existing.timeSlot));
           setNotes(existing.notes);
           setError('');
           setAdminSelectedTeam(existing.teamName);
@@ -75,7 +109,9 @@ export default function BookingModal({
       const isCustom = selectedSlot && !pitchSlots.includes(selectedSlot);
       setIsCustomTime(!!isCustom);
 
-      setTimeSlot(selectedSlot || pitchSlots[0] || '');
+      const resolvedSlot = selectedSlot || pitchSlots[0] || '09:30';
+      setTimeSlot(resolvedSlot);
+      setEndTime(getEndTimeForSlot(selectedPitchId, selectedDate || new Date().toISOString().split('T')[0], resolvedSlot));
       setNotes(selectedNotes);
       setError('');
       
@@ -85,20 +121,61 @@ export default function BookingModal({
     }
   }, [isOpen, selectedPitchId, selectedDate, selectedSlot, selectedNotes, selectedBookingId, pitches, existingBookings]);
 
+  // Keep standard slot endTime in sync
+  useEffect(() => {
+    if (!isCustomTime && date && timeSlot) {
+      setEndTime(getEndTimeForSlot(pitchId, date, timeSlot));
+    }
+  }, [isCustomTime, pitchId, date, timeSlot]);
+
   if (!isOpen) return null;
 
-  // Selected pitch's configured slots
-  const activePitch = pitches.find((p) => p.id === pitchId);
-  const slotsAvailable = activePitch ? activePitch.defaultSlots : [];
+  // Selected pitch's configured slots dynamically based on the selected date and format
+  const slotsAvailable = (() => {
+    if (!date) return ['09:30', '10:45', '12:00'];
+    const d = new Date(date);
+    const day = d.getDay();
+    const isWeekend = day === 0 || day === 6;
+    if (isWeekend) {
+      if (pitchId === '11v11') {
+        return ['10:00', '12:00'];
+      }
+      return ['09:30', '10:45', '12:00'];
+    } else {
+      return [
+        '09:00', '10:00', '11:00', '12:00', '13:00', '14:00',
+        '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00'
+      ];
+    }
+  })();
 
   const handlePitchChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selected = e.target.value as PitchSize;
     setPitchId(selected);
-    const updatedSlots = pitches.find((p) => p.id === selected)?.defaultSlots || [];
-    const firstSlot = updatedSlots[0] || '';
+    
+    // Determine slots available for the new pitch format
+    const tempSlotsAvailable = (() => {
+      if (!date) return ['09:30', '10:45', '12:00'];
+      const d = new Date(date);
+      const day = d.getDay();
+      const isWeekend = day === 0 || day === 6;
+      if (isWeekend) {
+        if (selected === '11v11') {
+          return ['10:00', '12:00'];
+        }
+        return ['09:30', '10:45', '12:00'];
+      } else {
+        return [
+          '09:00', '10:00', '11:00', '12:00', '13:00', '14:00',
+          '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00'
+        ];
+      }
+    })();
+    const firstSlot = tempSlotsAvailable[0] || '';
     
     if (!isCustomTime) {
       setTimeSlot(firstSlot);
+      setEndTime(getEndTimeForSlot(selected, date, firstSlot));
     }
 
     // Auto-update default team to fit this pitch size
@@ -120,29 +197,50 @@ export default function BookingModal({
       setError('Please select or specify a kick-off time slot.');
       return;
     }
+    if (!endTime) {
+      setError('Please specify a finish time.');
+      return;
+    }
 
     // Validate 24-hour format HH:MM if custom time is requested
     const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
     if (!timeRegex.test(timeSlot)) {
-      setError('Please enter a valid 24-hour time format (e.g. 10:30 or 14:15).');
+      setError('Please enter a valid 24-hour start time format (e.g. 10:30 or 14:15).');
+      return;
+    }
+    if (!timeRegex.test(endTime)) {
+      setError('Please enter a valid 24-hour finish time format (e.g. 11:45 or 16:00).');
+      return;
+    }
+
+    const parseTimeToMinutes = (t: string): number => {
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + m;
+    };
+
+    const startMins = parseTimeToMinutes(timeSlot);
+    const endMins = parseTimeToMinutes(endTime);
+
+    if (endMins <= startMins) {
+      setError('Finish time must be after start time.');
       return;
     }
 
     // Check if there's already an approved or pending booking for this pitch, date, and slot
-    const clash = existingBookings.find(
-      (b) =>
-        b.id !== selectedBookingId &&
-        b.pitchId === pitchId &&
-        b.date === date &&
-        b.timeSlot === timeSlot &&
-        b.status !== BookingStatus.DECLINED &&
-        b.status !== BookingStatus.UNBOOKED
-    );
+    const clash = existingBookings.find((b) => {
+      if (b.id === selectedBookingId || b.pitchId !== pitchId || b.date !== date) return false;
+      if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+
+      const bStart = parseTimeToMinutes(b.timeSlot);
+      const bEnd = parseTimeToMinutes(b.endTime || getEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+
+      return startMins < bEnd && bStart < endMins;
+    });
 
     if (clash) {
       const statusText = clash.status === BookingStatus.APPROVED ? 'already booked' : 'currently requested';
       setError(
-        `This slot is ${statusText} by ${clash.teamName} (${clash.managerName}). Please select another time or pitch.`
+        `This slot overlaps with a session ${statusText} by ${clash.teamName} (${clash.managerName}) from ${clash.timeSlot} to ${clash.endTime || getEndTimeForSlot(clash.pitchId, clash.date, clash.timeSlot)}. Please select another time or pitch.`
       );
       return;
     }
@@ -151,6 +249,7 @@ export default function BookingModal({
       pitchId,
       date,
       timeSlot,
+      endTime,
       notes,
       teamName: currentUser.role === 'ADMIN' ? adminSelectedTeam : undefined,
     });
@@ -257,45 +356,86 @@ export default function BookingModal({
               </div>
             </div>
 
-            {/* Time Slot Select */}
+            {/* Timing Select / Inputs */}
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2 flex items-center justify-between">
-                <span>Kick-off Time Slot</span>
+                <span>Booking Timing</span>
                 <button
                   type="button"
                   onClick={() => {
-                    setIsCustomTime(!isCustomTime);
-                    setTimeSlot(!isCustomTime ? '10:00' : (slotsAvailable[0] || ''));
+                    const nextCustom = !isCustomTime;
+                    setIsCustomTime(nextCustom);
+                    if (nextCustom) {
+                      setTimeSlot(timeSlot || '10:00');
+                      setEndTime(endTime || '11:00');
+                    } else {
+                      const firstS = slotsAvailable[0] || '09:30';
+                      setTimeSlot(firstS);
+                      setEndTime(getEndTimeForSlot(pitchId, date, firstS));
+                    }
                   }}
                   className="text-[10px] text-blue-700 hover:underline font-extrabold focus:outline-none"
                 >
                   {isCustomTime ? "Use Standard Slots" : "Request Custom Time"}
                 </button>
               </label>
+
               {isCustomTime ? (
-                <input
-                  type="text"
-                  value={timeSlot}
-                  onChange={(e) => setTimeSlot(e.target.value)}
-                  placeholder="e.g. 11:15 or 13:30"
-                  maxLength={5}
-                  className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2.5 px-3 text-slate-800 font-semibold focus:border-blue-900 focus:outline-none"
-                  required
-                />
+                <div className="space-y-2.5">
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Start Time (HH:MM)</span>
+                    <input
+                      type="text"
+                      value={timeSlot}
+                      onChange={(e) => setTimeSlot(e.target.value)}
+                      placeholder="e.g. 11:15"
+                      maxLength={5}
+                      className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2 px-3 text-slate-800 font-semibold focus:border-blue-900 focus:outline-none"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Finish Time (HH:MM)</span>
+                    <input
+                      type="text"
+                      value={endTime}
+                      onChange={(e) => setEndTime(e.target.value)}
+                      placeholder="e.g. 12:45"
+                      maxLength={5}
+                      className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2 px-3 text-slate-800 font-semibold focus:border-blue-900 focus:outline-none"
+                      required
+                    />
+                  </div>
+                </div>
               ) : (
-                <select
-                  value={timeSlot}
-                  onChange={(e) => setTimeSlot(e.target.value)}
-                  className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2.5 px-3 text-slate-800 font-semibold focus:border-blue-900 focus:outline-none"
-                  required
-                >
-                  <option value="">-- Select Time Slot --</option>
-                  {slotsAvailable.map((slot) => (
-                    <option key={slot} value={slot}>
-                      {slot}
-                    </option>
-                  ))}
-                </select>
+                <div className="space-y-2">
+                  <select
+                    value={timeSlot}
+                    onChange={(e) => {
+                      const selectedSlot = e.target.value;
+                      setTimeSlot(selectedSlot);
+                      setEndTime(getEndTimeForSlot(pitchId, date, selectedSlot));
+                    }}
+                    className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2.5 px-3 text-slate-800 font-semibold focus:border-blue-900 focus:outline-none"
+                    required
+                  >
+                    <option value="">-- Select Time Slot --</option>
+                    {slotsAvailable.map((slot) => {
+                      const computedEnd = getEndTimeForSlot(pitchId, date, slot);
+                      return (
+                        <option key={slot} value={slot}>
+                          {slot} to {computedEnd}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {timeSlot && endTime && (
+                    <div className="text-[11px] text-slate-500 font-semibold bg-slate-50 border border-slate-100 rounded-lg p-2 flex items-center justify-between">
+                      <span>Configured Period:</span>
+                      <strong className="text-blue-900">{timeSlot} - {endTime}</strong>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

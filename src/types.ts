@@ -24,6 +24,7 @@ export interface Booking {
   status: BookingStatus;
   declineReason?: string;
   createdAt: string;
+  endTime?: string; // e.g. "10:45"
 }
 
 export interface PitchConfig {

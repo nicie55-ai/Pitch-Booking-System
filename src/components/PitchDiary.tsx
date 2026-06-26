@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { 
   Calendar, 
@@ -62,9 +62,14 @@ export default function PitchDiary({
   const [confirmUnbookFixtureId, setConfirmUnbookFixtureId] = useState<string | null>(null);
 
   // Sorter / Filter States for the Team Pitch List (underneath calendar)
-  const [filterManagerOnly, setFilterManagerOnly] = useState<boolean>(currentUser.role === 'MANAGER');
+  const [filterManagerOnly, setFilterManagerOnly] = useState<boolean>(!!currentUser.teamName);
   const [fixturePitchFilter, setFixturePitchFilter] = useState<string>('ALL');
   const [fixtureDateFilter, setFixtureDateFilter] = useState<string>('ALL');
+
+  // Keep filterManagerOnly in sync with selected currentUser's teamName presence
+  useEffect(() => {
+    setFilterManagerOnly(!!currentUser.teamName);
+  }, [currentUser]);
 
   // Get active day of the week
   const dateObj = new Date(selectedDate);
@@ -108,16 +113,31 @@ export default function PitchDiary({
   };
 
   // 1. Dynamic Unique Slots generation for calendar rows on selectedDate
-  // This gathers standard slots AND any custom booking requested/approved on that date
+  // Show each of the hours between 9am and 9pm on weekdays.
+  // Show prebook slots 09:30, 10:45, 12:00 on Saturdays and Sundays.
+  const isWeekend = (() => {
+    const d = new Date(selectedDate);
+    const day = d.getDay();
+    return day === 0 || day === 6; // Sunday or Saturday
+  })();
+
+  const weekendSlots = ['09:30', '10:45', '12:00'];
+  const weekdaySlots = [
+    '09:00', '10:00', '11:00', '12:00', '13:00', '14:00',
+    '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00'
+  ];
+
+  const baseSlots = isWeekend ? weekendSlots : weekdaySlots;
+
   const allDateSlots = Array.from(new Set([
-    ...pitchConfigs.flatMap(p => p.defaultSlots),
-    ...bookings.filter(b => b.date === selectedDate && b.status !== BookingStatus.DECLINED).map(b => b.timeSlot)
+    ...baseSlots,
+    ...bookings.filter(b => b.date === selectedDate && b.status !== BookingStatus.DECLINED && b.status !== BookingStatus.UNBOOKED).map(b => b.timeSlot)
   ])).sort((a, b) => a.localeCompare(b));
 
   // 2. Build Unified Team Fixtures & Bookings List underneath
   // Filter FA full time fixtures matching criteria
   const filteredFAFixtures = MOCK_FA_FULLTIME_FIXTURES.filter((f) => {
-    if (filterManagerOnly && !isTeamMatch(currentUser.teamName, f.scotterTeam)) {
+    if (filterManagerOnly && (!currentUser.teamName || !isTeamMatch(currentUser.teamName, f.scotterTeam))) {
       return false;
     }
     if (fixturePitchFilter !== 'ALL' && f.pitchId !== fixturePitchFilter) {
@@ -129,10 +149,10 @@ export default function PitchDiary({
     return true;
   });
 
-  // Filter other non-FA manual bookings matching criteria
+  // Filter other non-FA manual bookings matching criteria: only show matches for their team when filterManagerOnly is enabled
   const manualBookings = bookings.filter((b) => {
     if (b.status === BookingStatus.DECLINED) return false;
-    if (filterManagerOnly && b.managerId !== currentUser.id && !isTeamMatch(currentUser.teamName, b.teamName)) {
+    if (filterManagerOnly && (!currentUser.teamName || !isTeamMatch(currentUser.teamName, b.teamName))) {
       return false;
     }
     if (fixturePitchFilter !== 'ALL' && b.pitchId !== fixturePitchFilter) {
@@ -206,6 +226,106 @@ export default function PitchDiary({
     if (dateCompare !== 0) return dateCompare;
     return a.timeSlot.localeCompare(b.timeSlot);
   });
+
+  const parseTimeToMinutes = (t: string): number => {
+    if (!t) return 0;
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+  };
+
+  const START_HOUR = 9;
+  const END_HOUR = 22; // up to 22:00
+  const START_MINUTES = START_HOUR * 60; // 540
+  const END_MINUTES = END_HOUR * 60;   // 1320
+  const TOTAL_MINUTES = END_MINUTES - START_MINUTES; // 780 minutes
+
+  const getPositionPercent = (timeStr: string): number => {
+    const mins = parseTimeToMinutes(timeStr);
+    const clamped = Math.max(START_MINUTES, Math.min(END_MINUTES, mins));
+    return ((clamped - START_MINUTES) / TOTAL_MINUTES) * 100;
+  };
+
+  const getEndTimeForSlot = (pId: PitchSize, dateStr: string, slot: string): string => {
+    if (!dateStr || !slot) return '';
+    const d = new Date(dateStr);
+    const day = d.getDay();
+    const isWeekend = day === 0 || day === 6;
+    if (isWeekend) {
+      if (pId === '11v11') {
+        if (slot === '10:00') return '12:00';
+        if (slot === '12:00') return '14:00';
+        const [hStr, mStr] = slot.split(':');
+        const h = parseInt(hStr, 10) + 2;
+        return `${String(h).padStart(2, '0')}:${mStr}`;
+      } else {
+        if (slot === '09:30') return '10:45';
+        if (slot === '10:45') return '12:00';
+        if (slot === '12:00') return '13:15';
+        
+        const [hStr, mStr] = slot.split(':');
+        const totalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10) + 75;
+        const h = Math.floor(totalMinutes / 60);
+        const m = totalMinutes % 60;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      }
+    } else {
+      const [hStr, mStr] = slot.split(':');
+      const h = parseInt(hStr, 10) + 1;
+      return `${String(h).padStart(2, '0')}:${mStr}`;
+    }
+  };
+
+  const WEEKEND_PREBOOKED_BLOCKS: Record<string, Array<{ start: string; end: string }>> = {
+    '5v5': [
+      { start: '09:30', end: '10:45' },
+      { start: '10:45', end: '12:00' },
+      { start: '12:00', end: '13:15' },
+    ],
+    '7v7': [
+      { start: '09:30', end: '10:45' },
+      { start: '10:45', end: '12:00' },
+      { start: '12:00', end: '13:15' },
+    ],
+    '9v9': [
+      { start: '09:30', end: '10:45' },
+      { start: '10:45', end: '12:00' },
+      { start: '12:00', end: '13:15' },
+    ],
+    '11v11': [
+      { start: '10:00', end: '12:00' },
+      { start: '12:00', end: '14:00' },
+    ],
+  };
+
+  const getStandardSlotsForDate = (pitchId: string, dateStr: string): Array<{ start: string; end: string }> => {
+    const d = new Date(dateStr);
+    const day = d.getDay();
+    const isWeekend = day === 0 || day === 6;
+    if (isWeekend) {
+      return WEEKEND_PREBOOKED_BLOCKS[pitchId] || [];
+    }
+    return [];
+  };
+
+  const isVacantSlotOverlapping = (slotStartStr: string, slotEndStr: string, pitchId: PitchSize, dateStr: string) => {
+    const startMins = parseTimeToMinutes(slotStartStr);
+    const endMins = parseTimeToMinutes(slotEndStr);
+    
+    return bookings.some(b => {
+      if (b.pitchId !== pitchId || b.date !== dateStr) return false;
+      if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+      
+      const bStart = parseTimeToMinutes(b.timeSlot);
+      const bEnd = parseTimeToMinutes(b.endTime || getEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+      
+      return startMins < bEnd && bStart < endMins;
+    });
+  };
+
+  const HOUR_ROWS = [
+    '09:00', '10:00', '11:00', '12:00', '13:00', '14:00',
+    '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00'
+  ];
 
   return (
     <div className="space-y-8">
@@ -380,251 +500,345 @@ export default function PitchDiary({
             Selected Date: <strong className="text-blue-900">{dayString}</strong>
           </span>
         </div>
-        
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 border-collapse">
-            <thead className="bg-slate-100/85">
-              <tr>
-                <th className="px-5 py-4 text-center text-xs font-bold text-blue-950 uppercase tracking-wider border-r border-slate-200 w-36">
-                  KO Time Slot
-                </th>
+
+        <div className="overflow-x-auto animate-fadeIn">
+          {/* Scrollable scheduler wrapper */}
+          <div className="min-w-[950px] relative flex flex-col bg-slate-50/25">
+            {/* Header row */}
+            <div className="flex border-b border-slate-200 bg-slate-100/90 sticky top-0 z-30 select-none">
+              <div className="w-24 sm:w-28 flex-shrink-0 py-4 px-3 text-center text-xs font-bold text-blue-950 uppercase tracking-wider border-r border-slate-200 flex items-center justify-center">
+                KO Time
+              </div>
+              <div className="flex-1 grid grid-cols-4 divide-x divide-slate-200">
                 {pitchConfigs.map((pitch) => (
-                  <th key={pitch.id} className="px-6 py-4 text-center text-xs font-black text-blue-950 uppercase tracking-wider min-w-[240px]">
-                    <div className="font-extrabold text-blue-900">{pitch.name}</div>
-                    <div className="text-[9px] text-slate-400 font-bold mt-0.5 tracking-widest">{pitch.id} Pitch Format</div>
-                  </th>
+                  <div key={pitch.id} className="py-4 text-center text-xs font-black text-blue-950 uppercase tracking-wider flex flex-col justify-center">
+                    <span className="font-black text-blue-900 text-[13px]">{pitch.name}</span>
+                    <span className="text-[9px] text-slate-400 font-bold mt-0.5 tracking-wider">{pitch.id} Pitch Format</span>
+                  </div>
                 ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white">
-              {allDateSlots.length === 0 ? (
-                <tr>
-                  <td colSpan={pitchConfigs.length + 1} className="py-12 text-center text-slate-400 font-semibold text-xs">
-                    No kickoff slots available or configured for this day.
-                  </td>
-                </tr>
-              ) : (
-                allDateSlots.map((slot) => (
-                  <tr key={slot} className="hover:bg-slate-50/45 transition-colors">
-                    {/* Time Slot Column (Left) */}
-                    <td className="px-5 py-6 whitespace-nowrap font-extrabold text-blue-900 bg-slate-50/50 border-r border-slate-200 text-center">
-                      <div className="flex items-center justify-center space-x-2">
-                        <Clock className="w-4 h-4 text-blue-900/50" />
-                        <span className="text-base tracking-tight font-black">{slot}</span>
+              </div>
+            </div>
+
+            {/* Grid Body */}
+            <div className="flex relative h-[1300px]">
+              {/* Left Column (Hour markers) */}
+              <div className="w-24 sm:w-28 flex-shrink-0 border-r border-slate-200 relative bg-slate-50/60 select-none">
+                {HOUR_ROWS.map((hour, idx) => {
+                  return (
+                    <div
+                      key={hour}
+                      className="absolute left-0 right-0 border-t border-transparent text-center"
+                      style={{ top: `${(idx / HOUR_ROWS.length) * 100}%` }}
+                    >
+                      <div className="flex items-center justify-center space-x-1 py-1 text-slate-600">
+                        <Clock className="w-3 h-3 text-slate-400" />
+                        <span className="text-[11px] font-extrabold font-mono tracking-tight">{hour}</span>
                       </div>
-                    </td>
+                    </div>
+                  );
+                })}
+                {/* 22:00 bottom label */}
+                <div className="absolute left-0 right-0 bottom-0 text-center">
+                  <div className="flex items-center justify-center space-x-1 py-1 text-slate-600">
+                    <Clock className="w-3 h-3 text-slate-400" />
+                    <span className="text-[11px] font-extrabold font-mono tracking-tight">22:00</span>
+                  </div>
+                </div>
+              </div>
 
-                    {/* Pitches (Right Columns) */}
-                    {pitchConfigs.map((pitch) => {
-                      const isDefaultSlot = pitch.defaultSlots.includes(slot);
-                      const booking = bookings.find(
-                        (b) => b.pitchId === pitch.id && b.date === selectedDate && b.timeSlot === slot
-                      );
+              {/* Pitch Columns Container */}
+              <div className="flex-1 grid grid-cols-4 relative divide-x divide-slate-200 bg-white">
+                {pitchConfigs.map((pitch) => {
+                  // Get bookings for this pitch and date
+                  const activeBookings = bookings.filter(
+                    (b) =>
+                      b.pitchId === pitch.id &&
+                      b.date === selectedDate &&
+                      b.status !== BookingStatus.DECLINED &&
+                      b.status !== BookingStatus.UNBOOKED
+                  );
 
-                      return (
-                        <td key={pitch.id} className="px-4 py-3 border-l border-slate-100 text-center align-middle">
-                          {booking && booking.status !== BookingStatus.DECLINED && booking.status !== BookingStatus.UNBOOKED ? (
-                            // Booked Slot representation
-                            (() => {
-                              const tooltipText = [
-                                `Team: ${booking.teamName}`,
-                                `Booked by: ${booking.managerName}`,
-                                `Status: ${booking.status === BookingStatus.APPROVED ? 'Approved' : 'Pending Approval'}`,
-                                `Submitted: ${new Date(booking.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} at ${new Date(booking.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`,
-                                booking.notes ? `Notes: "${booking.notes}"` : ''
-                              ].filter(Boolean).join('\n');
+                  // Get standard weekend slots
+                  const standardSlots = getStandardSlotsForDate(pitch.id, selectedDate);
 
-                              return (
-                                <div 
-                                  className={`p-4 rounded-xl border text-left space-y-2.5 transition-all shadow-sm cursor-help ${
-                                    booking.status === BookingStatus.APPROVED
-                                      ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950 shadow-emerald-50/50 hover:bg-emerald-100/90'
-                                      : 'bg-amber-50/80 border-amber-200 text-amber-950 shadow-amber-50/50 hover:bg-amber-100/90'
-                                  }`}
-                                  title={tooltipText}
-                                >
-                                  <div className="flex justify-between items-start gap-2">
-                                    <div>
-                                      <div className="flex items-center space-x-1">
-                                        <p className="text-xs font-black leading-snug">{booking.teamName}</p>
-                                        <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 flex-shrink-0" />
-                                      </div>
-                                      <p className="text-[9px] text-slate-500 font-extrabold mt-0.5 uppercase tracking-wide">Booked by: {booking.managerName}</p>
-                                    </div>
-                                    {booking.status === BookingStatus.APPROVED ? (
-                                      <span className="inline-flex items-center text-[8px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider">
-                                        Approved
-                                      </span>
-                                    ) : (
-                                      <span className="inline-flex items-center text-[8px] bg-amber-100 text-amber-800 font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
-                                        Pending
-                                      </span>
-                                    )}
-                                  </div>
+                  return (
+                    <div key={pitch.id} className="relative h-full overflow-visible group/col">
+                      {/* 1. Background Grid Hour lanes */}
+                      {HOUR_ROWS.map((hour, idx) => {
+                        return (
+                          <div
+                            key={hour}
+                            onClick={() => onRequestBooking(pitch.id, hour)}
+                            className="absolute left-0 right-0 border-b border-slate-100 hover:bg-slate-50/40 transition-colors cursor-pointer flex items-start justify-end p-1.5 group/cell"
+                            style={{
+                              top: `${(idx / HOUR_ROWS.length) * 100}%`,
+                              height: `${(1 / HOUR_ROWS.length) * 100}%`,
+                            }}
+                          >
+                            <span className="opacity-0 group-hover/cell:opacity-100 text-[9px] font-black text-blue-700 bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5 shadow-sm uppercase tracking-wider transition-opacity duration-150">
+                              ＋ Request {hour}
+                            </span>
+                          </div>
+                        );
+                      })}
 
-                                  <div className="flex justify-end pt-1 gap-1.5">
-                                    {/* Actions for Admins */}
-                                    {currentUser.role === 'ADMIN' && (
-                                      <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                                        {booking.status === BookingStatus.PENDING ? (
-                                          <>
-                                            <button
-                                              onClick={(e) => { e.stopPropagation(); onApproveBooking(booking.id); }}
-                                              className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold py-1 px-2.5 rounded-md shadow-sm transition-colors"
-                                            >
-                                              Approve
-                                            </button>
-                                            <button
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                setDecliningId(booking.id);
-                                                setDeclineReason('');
-                                              }}
-                                              className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold py-1 px-2.5 rounded-md shadow-sm transition-colors"
-                                            >
-                                              Decline
-                                            </button>
-                                          </>
-                                        ) : (
-                                          confirmCancelBookingId === booking.id ? (
-                                            <div className="flex items-center space-x-1 bg-red-100 border border-red-200 p-1 rounded">
-                                              <span className="text-[8px] font-black text-red-800 uppercase">Cancel?</span>
-                                              <button
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  onCancelBooking(booking.id);
-                                                  setConfirmCancelBookingId(null);
-                                                }}
-                                                className="bg-red-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded"
-                                              >
-                                                Yes
-                                              </button>
-                                              <button
-                                                onClick={(e) => { e.stopPropagation(); setConfirmCancelBookingId(null); }}
-                                                className="bg-slate-300 text-slate-850 text-[8px] font-bold px-1.5 py-0.5 rounded"
-                                              >
-                                                No
-                                              </button>
-                                            </div>
-                                          ) : (
-                                            <button
-                                              onClick={(e) => { e.stopPropagation(); setConfirmCancelBookingId(booking.id); }}
-                                              className="text-red-700 hover:bg-red-50 text-[10px] font-bold py-1 px-2.5 rounded-md border border-red-200 transition-colors bg-white"
-                                            >
-                                              Cancel
-                                            </button>
-                                          )
-                                        )}
-                                      </div>
-                                    )}
+                      {/* 2. Render Vacant Prebooked Blocks (Saturdays/Sundays only) */}
+                      {standardSlots.map((slot) => {
+                        const isOverlapping = isVacantSlotOverlapping(slot.start, slot.end, pitch.id, selectedDate);
+                        if (isOverlapping) return null;
 
-                                    {/* Cancel for the requesting manager */}
-                                    {currentUser.role === 'MANAGER' && canManagerUnbook(currentUser, booking) && (
-                                      confirmCancelBookingId === booking.id ? (
-                                        <div className="flex items-center space-x-1 bg-red-100 border border-red-200 p-1 rounded" onClick={(e) => e.stopPropagation()}>
-                                          <span className="text-[8px] font-black text-red-800 uppercase">Unbook?</span>
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              onCancelBooking(booking.id);
-                                              setConfirmCancelBookingId(null);
-                                            }}
-                                            className="bg-red-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded"
-                                          >
-                                            Yes
-                                          </button>
-                                          <button
-                                            onClick={(e) => { e.stopPropagation(); setConfirmCancelBookingId(null); }}
-                                            className="bg-slate-300 text-slate-850 text-[8px] font-bold px-1.5 py-0.5 rounded"
-                                          >
-                                            No
-                                          </button>
+                        const topPercent = getPositionPercent(slot.start);
+                        const endPercent = getPositionPercent(slot.end);
+                        const heightPercent = endPercent - topPercent;
+
+                        return (
+                          <div
+                            key={`${slot.start}-${slot.end}`}
+                            style={{
+                              top: `${topPercent}%`,
+                              height: `${heightPercent}%`,
+                            }}
+                            className="absolute left-1 right-1 z-10 p-2.5 bg-blue-50/15 hover:bg-blue-50/35 rounded-xl border-2 border-dashed border-blue-200/90 hover:border-blue-500 hover:shadow-md transition-all flex flex-col justify-between"
+                          >
+                            <div>
+                              <div className="flex items-center space-x-1">
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                                <span className="text-[10px] text-blue-900 font-extrabold uppercase tracking-wide">
+                                  Weekend Prebook Slot
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-500 font-bold font-mono mt-1">
+                                {slot.start} - {slot.end}
+                              </p>
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onRequestBooking(pitch.id, slot.start);
+                              }}
+                              className="bg-blue-900 hover:bg-blue-800 text-white text-[10px] font-extrabold py-1 px-2.5 rounded-lg shadow-sm transition-all flex items-center justify-center space-x-1"
+                            >
+                              <PlusCircle className="w-3 h-3" />
+                              <span>Book Block</span>
+                            </button>
+                          </div>
+                        );
+                      })}
+
+                      {/* 3. Render Active Bookings */}
+                      {activeBookings.map((booking) => {
+                        const resolvedEndTime = booking.endTime || getEndTimeForSlot(booking.pitchId, booking.date, booking.timeSlot);
+                        const topPercent = getPositionPercent(booking.timeSlot);
+                        const endPercent = getPositionPercent(resolvedEndTime);
+                        const heightPercent = endPercent - topPercent;
+
+                        const tooltipText = [
+                          `Team: ${booking.teamName}`,
+                          `Booked by: ${booking.managerName}`,
+                          `Status: ${booking.status === BookingStatus.APPROVED ? 'Approved' : 'Pending Approval'}`,
+                          `Submitted: ${new Date(booking.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} at ${new Date(booking.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`,
+                          booking.notes ? `Notes: "${booking.notes}"` : ''
+                        ].filter(Boolean).join('\n');
+
+                        return (
+                          <div
+                            key={booking.id}
+                            style={{
+                              top: `${topPercent}%`,
+                              height: `${heightPercent}%`,
+                            }}
+                            className={`absolute left-1 right-1 z-20 p-2.5 rounded-xl border text-left shadow-sm hover:shadow-md transition-all flex flex-col justify-between overflow-hidden group/bookingcard ${
+                              booking.status === BookingStatus.APPROVED
+                                ? 'bg-emerald-50 border-emerald-300 text-emerald-950 shadow-emerald-50/30 hover:bg-emerald-100/90'
+                                : 'bg-amber-50 border-amber-300 text-amber-950 shadow-amber-50/30 hover:bg-amber-100/90'
+                            }`}
+                            title={tooltipText}
+                          >
+                            <div className="space-y-1 overflow-hidden">
+                              <div className="flex justify-between items-start gap-1">
+                                <div className="flex items-center space-x-1 min-w-0">
+                                  <p className="text-[11px] font-black leading-tight text-slate-900 truncate">
+                                    {booking.teamName}
+                                  </p>
+                                  {/* Info Trigger with Custom Overlay Tooltip on Hover */}
+                                  <div className="relative group/tooltip inline-block flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                                    <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 cursor-help transition-colors" />
+                                    {/* Tooltip Content positioned relative to the card to stay fully visible */}
+                                    <div className="pointer-events-none absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-slate-900 text-white text-[11px] rounded-xl p-3.5 shadow-2xl border border-slate-800 opacity-0 group-hover/tooltip:opacity-100 transition-opacity duration-150 ease-out text-left">
+                                      <div className="space-y-2">
+                                        <div className="border-b border-slate-800 pb-1 flex justify-between items-center">
+                                          <span className="font-extrabold text-[9px] uppercase tracking-wider text-blue-400">Booking Details</span>
+                                          <span className="text-[8px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-bold uppercase">{booking.status}</span>
                                         </div>
-                                      ) : (
-                                        <button
-                                          onClick={(e) => { e.stopPropagation(); setConfirmCancelBookingId(booking.id); }}
-                                          className="text-red-600 hover:bg-red-50 text-[10px] font-extrabold py-1 px-2.5 rounded-md border border-red-200 transition-colors bg-white"
-                                        >
-                                          Cancel Request
-                                        </button>
-                                      )
-                                    )}
+                                        <p className="font-black text-white text-xs leading-snug">{booking.teamName}</p>
+                                        <div className="space-y-1 text-slate-300 font-medium font-sans">
+                                          <p><strong className="text-slate-500">Booked by:</strong> {booking.managerName}</p>
+                                          <p><strong className="text-slate-500">Date & Time:</strong> {new Date(booking.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} from {booking.timeSlot} to {resolvedEndTime}</p>
+                                          <p><strong className="text-slate-500">Submitted:</strong> {new Date(booking.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} at {new Date(booking.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
+                                          {booking.notes && (
+                                            <div className="italic text-slate-400 mt-1 bg-slate-950/50 p-2 rounded-lg border border-slate-800 text-[10px] font-sans">
+                                              "{booking.notes}"
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-900" />
+                                    </div>
                                   </div>
+                                </div>
+                                <span className={`inline-flex items-center text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider ${
+                                  booking.status === BookingStatus.APPROVED ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-850 animate-pulse'
+                                }`}>
+                                  {booking.status === BookingStatus.APPROVED ? 'Approved' : 'Pending'}
+                                </span>
+                              </div>
+                              <p className="text-[9px] text-slate-500 font-extrabold uppercase tracking-wide truncate">
+                                KO: {booking.timeSlot} - {resolvedEndTime}
+                              </p>
+                              <p className="text-[8px] text-slate-400 font-bold truncate">
+                                By {booking.managerName}
+                              </p>
+                            </div>
 
-                                  {/* Decline input inside cell */}
-                                  {decliningId === booking.id && (
-                                    <div className="mt-2 pt-2 border-t border-slate-200/50 text-left" onClick={(e) => e.stopPropagation()}>
-                                      <label className="block text-[9px] font-bold text-slate-700 uppercase mb-1">
-                                        Decline Reason
-                                      </label>
-                                      <textarea
-                                        value={declineReason}
-                                        onChange={(e) => setDeclineReason(e.target.value)}
-                                        placeholder="Provide justification..."
-                                        rows={1.5}
-                                        className="w-full text-xs p-1.5 border border-slate-300 rounded focus:border-red-600 focus:outline-none bg-white font-medium text-slate-800"
-                                        required
-                                      />
-                                      <div className="flex space-x-1.5 mt-1.5 justify-end">
-                                        <button
-                                          onClick={(e) => { e.stopPropagation(); setDecliningId(null); }}
-                                          className="text-slate-500 hover:bg-slate-100 text-[9px] font-bold py-0.5 px-2 rounded"
-                                        >
-                                          Cancel
-                                        </button>
+                            {/* Booking Action Buttons inside Scheduler Card */}
+                            <div className="flex justify-end pt-1 gap-1" onClick={(e) => e.stopPropagation()}>
+                              {/* ADMIN ACTIONS */}
+                              {currentUser.role === 'ADMIN' && (
+                                <div className="flex gap-1">
+                                  {booking.status === BookingStatus.PENDING ? (
+                                    <>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); onApproveBooking(booking.id); }}
+                                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-extrabold py-0.5 px-2 rounded-md shadow-sm transition-colors"
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setDecliningId(booking.id);
+                                          setDeclineReason('');
+                                        }}
+                                        className="bg-red-600 hover:bg-red-700 text-white text-[9px] font-extrabold py-0.5 px-2 rounded-md shadow-sm transition-colors"
+                                      >
+                                        Decline
+                                      </button>
+                                    </>
+                                  ) : (
+                                    confirmCancelBookingId === booking.id ? (
+                                      <div className="flex items-center space-x-1 bg-red-100 border border-red-200 p-0.5 rounded">
+                                        <span className="text-[8px] font-black text-red-800 uppercase">Cancel?</span>
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            if (!declineReason.trim()) {
-                                              alert('Please enter a decline reason.');
-                                              return;
-                                            }
-                                            onDeclineBooking(booking.id, declineReason);
-                                            setDecliningId(null);
+                                            onCancelBooking(booking.id);
+                                            setConfirmCancelBookingId(null);
                                           }}
-                                          className="bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold py-0.5 px-2 rounded shadow-sm"
+                                          className="bg-red-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded"
                                         >
-                                          Submit
+                                          Yes
+                                        </button>
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); setConfirmCancelBookingId(null); }}
+                                          className="bg-slate-300 text-slate-850 text-[8px] font-bold px-1.5 py-0.5 rounded"
+                                        >
+                                          No
                                         </button>
                                       </div>
-                                    </div>
+                                    ) : (
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); setConfirmCancelBookingId(booking.id); }}
+                                        className="text-red-700 hover:bg-red-50 text-[9px] font-extrabold py-0.5 px-2 rounded-md border border-red-200 transition-colors bg-white shadow-sm"
+                                      >
+                                        Cancel
+                                      </button>
+                                    )
                                   )}
                                 </div>
-                              );
-                            })()
-                          ) : (
-                            // Empty Vacant Slot representation
-                            <div className="flex flex-col items-center justify-center py-4 bg-slate-50/30 rounded-xl border border-dashed border-slate-100 hover:border-slate-300 hover:bg-slate-50/80 transition-all">
-                              <span className="text-[10px] text-slate-400 font-extrabold block mb-1.5 uppercase">
-                                {isDefaultSlot ? 'Vacant' : 'Custom KO'}
-                              </span>
-                              {currentUser.role === 'MANAGER' ? (
-                                <button
-                                  onClick={() => onRequestBooking(pitch.id, slot)}
-                                  className="bg-blue-900/10 hover:bg-blue-900 text-blue-900 hover:text-white text-[10px] font-bold py-1 px-2.5 rounded-lg transition-all flex items-center space-x-1"
-                                >
-                                  <PlusCircle className="w-3.5 h-3.5" />
-                                  <span>Request Slot</span>
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => onRequestBooking(pitch.id, slot)}
-                                  className="border border-dashed border-blue-900/40 text-blue-900 hover:bg-blue-50 text-[10px] font-bold py-1 px-2.5 rounded-lg transition-all flex items-center space-x-1"
-                                >
-                                  <PlusCircle className="w-3.5 h-3.5" />
-                                  <span>Admin Book</span>
-                                </button>
+                              )}
+
+                              {/* MANAGER ACTIONS */}
+                              {currentUser.role === 'MANAGER' && canManagerUnbook(currentUser, booking) && (
+                                confirmCancelBookingId === booking.id ? (
+                                  <div className="flex items-center space-x-1 bg-red-100 border border-red-200 p-0.5 rounded">
+                                    <span className="text-[8px] font-black text-red-800 uppercase">Unbook?</span>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onCancelBooking(booking.id);
+                                        setConfirmCancelBookingId(null);
+                                      }}
+                                      className="bg-red-600 text-white text-[8px] font-bold px-1.5 py-0.5 rounded"
+                                    >
+                                      Yes
+                                    </button>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); setConfirmCancelBookingId(null); }}
+                                      className="bg-slate-300 text-slate-850 text-[8px] font-bold px-1.5 py-0.5 rounded"
+                                    >
+                                      No
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setConfirmCancelBookingId(booking.id); }}
+                                    className="text-red-600 hover:bg-red-50 text-[9px] font-extrabold py-0.5 px-2 rounded-md border border-red-200 transition-colors bg-white shadow-sm"
+                                  >
+                                    Unbook
+                                  </button>
+                                )
                               )}
                             </div>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+
+                            {/* Inline Decline Overlay for Admins inside scheduler card */}
+                            {decliningId === booking.id && (
+                              <div className="absolute inset-0 bg-white/95 p-2 z-30 flex flex-col justify-between" onClick={(e) => e.stopPropagation()}>
+                                <div>
+                                  <label className="block text-[8px] font-extrabold text-slate-700 uppercase mb-0.5">
+                                    Decline Reason
+                                  </label>
+                                  <textarea
+                                    value={declineReason}
+                                    onChange={(e) => setDeclineReason(e.target.value)}
+                                    placeholder="Reason..."
+                                    rows={2}
+                                    className="w-full text-[10px] p-1 border border-slate-300 rounded focus:border-red-600 focus:outline-none bg-white font-medium text-slate-800"
+                                    required
+                                  />
+                                </div>
+                                <div className="flex space-x-1 justify-end">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setDecliningId(null); }}
+                                    className="text-slate-500 hover:bg-slate-100 text-[9px] font-extrabold py-0.5 px-1.5 rounded"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (!declineReason.trim()) {
+                                        alert('Please enter a decline reason.');
+                                        return;
+                                      }
+                                      onDeclineBooking(booking.id, declineReason);
+                                      setDecliningId(null);
+                                    }}
+                                    className="bg-red-600 hover:bg-red-700 text-white text-[9px] font-extrabold py-0.5 px-1.5 rounded shadow-sm"
+                                  >
+                                    Submit
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -714,6 +928,7 @@ export default function PitchDiary({
               <tbody className="divide-y divide-slate-100">
                 {unifiedList.map((item) => {
                   const isBooked = !!item.booking && item.booking.status !== BookingStatus.UNBOOKED;
+                  const isUnbooked = item.booking?.status === BookingStatus.UNBOOKED;
                   const bookingStatus = item.booking?.status;
                   const formattedDate = new Date(item.date).toLocaleDateString('en-GB', {
                     weekday: 'short',
@@ -730,6 +945,8 @@ export default function PitchDiary({
                           ? bookingStatus === BookingStatus.APPROVED
                             ? 'bg-emerald-50/15'
                             : 'bg-amber-50/15'
+                          : isUnbooked
+                          ? 'bg-rose-50/20'
                           : ''
                       }`}
                     >
@@ -771,18 +988,23 @@ export default function PitchDiary({
                       <td className="px-5 py-4 whitespace-nowrap">
                         {isBooked ? (
                           bookingStatus === BookingStatus.APPROVED ? (
-                            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-105 text-emerald-800">
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-50 text-emerald-800 border border-emerald-200">
                               <CheckCircle className="w-3.5 h-3.5 mr-1 text-emerald-600" />
                               Pitch Booked
                             </span>
                           ) : (
-                            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-105 text-amber-800 animate-pulse">
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-50 text-amber-800 border border-amber-200 animate-pulse">
                               <AlertCircle className="w-3.5 h-3.5 mr-1 text-amber-500" />
                               Approval Pending
                             </span>
                           )
+                        ) : isUnbooked ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-extrabold bg-rose-50 text-rose-800 border border-rose-200 animate-pulse">
+                            <AlertCircle className="w-3.5 h-3.5 mr-1 text-rose-500" />
+                            Pitch Unbooked
+                          </span>
                         ) : (
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-extrabold bg-red-105 text-red-800">
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-extrabold bg-red-50 text-red-800 border border-red-200">
                             <AlertCircle className="w-3.5 h-3.5 mr-1 text-red-500" />
                             No Pitch Booked
                           </span>

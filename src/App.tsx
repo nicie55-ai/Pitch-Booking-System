@@ -20,7 +20,11 @@ export default function App() {
   // Load initial state from LocalStorage or mock data
   const [bookings, setBookings] = useState<Booking[]>(() => {
     const saved = localStorage.getItem('scotter_jfc_bookings');
-    return saved ? JSON.parse(saved) : INITIAL_BOOKINGS;
+    const parsed: Booking[] = saved ? JSON.parse(saved) : INITIAL_BOOKINGS;
+    return parsed.map(b => ({
+      ...b,
+      teamName: b.teamName ? b.teamName.replace('Scotter United ', '') : '',
+    }));
   });
 
   const [pitchConfigs, setPitchConfigs] = useState<PitchConfig[]>(() => {
@@ -30,13 +34,21 @@ export default function App() {
 
   const [slotChangeRequests, setSlotChangeRequests] = useState<SlotChangeRequest[]>(() => {
     const saved = localStorage.getItem('scotter_jfc_slot_changes');
-    return saved ? JSON.parse(saved) : INITIAL_SLOT_CHANGES;
+    const parsed: SlotChangeRequest[] = saved ? JSON.parse(saved) : INITIAL_SLOT_CHANGES;
+    return parsed.map(sc => ({
+      ...sc,
+      teamName: sc.teamName ? sc.teamName.replace('Scotter United ', '') : '',
+    }));
   });
 
   const [currentUser, setCurrentUser] = useState<UserType>(() => {
     const saved = localStorage.getItem('scotter_jfc_current_user');
     // Default to Paul Scholes (U9 Manager) to give a nice interactive starting point
-    return saved ? JSON.parse(saved) : MOCK_USERS[1];
+    const parsed: UserType = saved ? JSON.parse(saved) : MOCK_USERS[1];
+    if (parsed && parsed.teamName) {
+      parsed.teamName = parsed.teamName.replace('Scotter United ', '');
+    }
+    return parsed;
   });
 
   // Default Selected Date: Saturday, June 27th, 2026 (populated with mock bookings)
@@ -90,6 +102,7 @@ export default function App() {
     timeSlot: string;
     notes: string;
     teamName?: string;
+    endTime?: string;
   }) => {
     if (modalPrefills.bookingId) {
       // UPDATE/RE-BOOK EXISTING BOOKING
@@ -101,6 +114,7 @@ export default function App() {
                 pitchId: data.pitchId,
                 date: data.date,
                 timeSlot: data.timeSlot,
+                endTime: data.endTime,
                 notes: data.notes,
                 status: currentUser.role === 'ADMIN' ? BookingStatus.APPROVED : BookingStatus.PENDING,
               }
@@ -117,6 +131,7 @@ export default function App() {
       pitchId: data.pitchId,
       date: data.date,
       timeSlot: data.timeSlot,
+      endTime: data.endTime,
       teamName: data.teamName || (currentUser.role === 'ADMIN' ? 'Club Booking' : (currentUser.teamName || 'Club Team')),
       managerName: currentUser.name,
       managerId: currentUser.id,
