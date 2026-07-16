@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { User as UserIcon, Shield, UserCircle, RefreshCw } from 'lucide-react';
 import { User } from '../types';
 
-const crestLogo = "/src/assets/images/scotter_united_crest_1782420923383.jpg";
+const crestLogo = "/src/assets/images/scotter_united_crest_1782589082484.jpg";
 
 interface HeaderProps {
   currentUser: User;
@@ -25,11 +25,11 @@ export default function Header({ currentUser, users, onUserChange }: HeaderProps
         <div className="flex justify-between items-center h-20">
           {/* Logo & Branding */}
           <div className="flex items-center space-x-4">
-            <div className="w-14 h-14 bg-white rounded-full p-0.5 border border-white shadow-md overflow-hidden flex items-center justify-center">
+            <div className="w-14 h-14 bg-white rounded-full border-2 border-white shadow-md overflow-hidden flex items-center justify-center">
               <img
                 src={crestLogo}
                 alt="Scotter United JFC Logo"
-                className="w-full h-full object-contain"
+                className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
               />
             </div>

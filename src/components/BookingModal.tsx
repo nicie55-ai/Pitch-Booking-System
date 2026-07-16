@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { X, Calendar, Clock, MapPin, Clipboard, FileText } from 'lucide-react';
+import { X, Calendar, Clock, MapPin, Clipboard, FileText, AlertTriangle } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, User } from '../types';
 import { SCOTTER_TEAMS } from '../mockData';
 
@@ -53,6 +53,7 @@ export default function BookingModal({
   const [adminSelectedTeam, setAdminSelectedTeam] = useState<string>('');
   const [isCustomTime, setIsCustomTime] = useState<boolean>(false);
   const [bookingType, setBookingType] = useState<'STANDARD' | 'MATCH'>('STANDARD');
+  const [confirmDoubleBooking, setConfirmDoubleBooking] = useState<boolean>(false);
 
   const parseTimeToMinutes = (t: string): number => {
     if (!t) return 0;
@@ -68,8 +69,26 @@ export default function BookingModal({
     const mNum = parseInt(mStr, 10);
     if (isNaN(hNum) || isNaN(mNum)) return '';
 
-    // Standard is 1 hour (60 minutes). Match is 1 hour 15 minutes (75 minutes).
-    const duration = type === 'MATCH' ? 75 : 60;
+    // Default weekday durations: Standard is 60m, Match is 75m
+    let duration = type === 'MATCH' ? 75 : 60;
+
+    if (dateStr) {
+      const d = new Date(dateStr);
+      const day = d.getDay();
+      const isWeekend = day === 0 || day === 6;
+      if (isWeekend) {
+        if (pId === '11v11') {
+          duration = 120;
+        } else if (pId === '9v9') {
+          duration = 90;
+        } else if (pId === '7v7') {
+          duration = 75;
+        } else if (pId === '5v5') {
+          duration = 60;
+        }
+      }
+    }
+
     const totalMinutes = hNum * 60 + mNum + duration;
     const h = Math.floor(totalMinutes / 60);
     const m = totalMinutes % 60;
@@ -78,6 +97,7 @@ export default function BookingModal({
 
   useEffect(() => {
     if (isOpen) {
+      setConfirmDoubleBooking(false);
       if (selectedBookingId) {
         const existing = existingBookings.find((b) => b.id === selectedBookingId);
         if (existing) {
@@ -135,46 +155,94 @@ export default function BookingModal({
 
   if (!isOpen) return null;
 
-  // Selected pitch's configured slots dynamically based on the selected date and format
+  // Selected pitch's configured slots dynamically based on the selected date and format (filtering out occupied ones)
   const slotsAvailable = (() => {
     if (!date) return ['09:30', '10:45', '12:00'];
     const d = new Date(date);
     const day = d.getDay();
     const isWeekend = day === 0 || day === 6;
+    let baseSlots: string[] = [];
     if (isWeekend) {
       if (pitchId === '11v11') {
-        return ['10:00', '12:00'];
+        baseSlots = ['10:00', '12:00'];
+      } else {
+        baseSlots = ['09:30', '10:45', '12:00'];
       }
-      return ['09:30', '10:45', '12:00'];
     } else {
-      return [
+      baseSlots = [
         '09:00', '10:00', '11:00', '12:00', '13:00', '14:00',
         '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00'
       ];
     }
+
+    return baseSlots.filter((slot) => {
+      const slotStart = parseTimeToMinutes(slot);
+      const slotEnd = parseTimeToMinutes(getEndTimeForSlot(pitchId, date, slot, bookingType));
+
+      const hasClash = existingBookings.some((b) => {
+        if (b.id === selectedBookingId || b.date !== date) return false;
+        
+        const pitchMatches = b.pitchId === pitchId || 
+          ((pitchId === '5v5' && b.pitchId === '11v11') || (pitchId === '11v11' && b.pitchId === '5v5'));
+          
+        if (!pitchMatches) return false;
+        if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+
+        const bStart = parseTimeToMinutes(b.timeSlot);
+        const bEnd = parseTimeToMinutes(b.endTime || getEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+
+        return slotStart < bEnd && bStart < slotEnd;
+      });
+
+      return !hasClash;
+    });
   })();
 
   const handlePitchChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selected = e.target.value as PitchSize;
     setPitchId(selected);
     
-    // Determine slots available for the new pitch format
+    // Determine slots available for the new pitch format (filtering out occupied ones)
     const tempSlotsAvailable = (() => {
       if (!date) return ['09:30', '10:45', '12:00'];
       const d = new Date(date);
       const day = d.getDay();
       const isWeekend = day === 0 || day === 6;
+      let baseSlots: string[] = [];
       if (isWeekend) {
         if (selected === '11v11') {
-          return ['10:00', '12:00'];
+          baseSlots = ['10:00', '12:00'];
+        } else {
+          baseSlots = ['09:30', '10:45', '12:00'];
         }
-        return ['09:30', '10:45', '12:00'];
       } else {
-        return [
+        baseSlots = [
           '09:00', '10:00', '11:00', '12:00', '13:00', '14:00',
           '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00'
         ];
       }
+
+      return baseSlots.filter((slot) => {
+        const slotStart = parseTimeToMinutes(slot);
+        const slotEnd = parseTimeToMinutes(getEndTimeForSlot(selected, date, slot, bookingType));
+
+        const hasClash = existingBookings.some((b) => {
+          if (b.id === selectedBookingId || b.date !== date) return false;
+          
+          const pitchMatches = b.pitchId === selected || 
+            ((selected === '5v5' && b.pitchId === '11v11') || (selected === '11v11' && b.pitchId === '5v5'));
+            
+          if (!pitchMatches) return false;
+          if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+
+          const bStart = parseTimeToMinutes(b.timeSlot);
+          const bEnd = parseTimeToMinutes(b.endTime || getEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+
+          return slotStart < bEnd && bStart < slotEnd;
+        });
+
+        return !hasClash;
+      });
     })();
     const firstSlot = tempSlotsAvailable[0] || '';
     
@@ -233,7 +301,12 @@ export default function BookingModal({
 
     // Check if there's already an approved or pending booking for this pitch, date, and slot
     const clash = existingBookings.find((b) => {
-      if (b.id === selectedBookingId || b.pitchId !== pitchId || b.date !== date) return false;
+      if (b.id === selectedBookingId || b.date !== date) return false;
+      
+      const pitchMatches = b.pitchId === pitchId || 
+        ((pitchId === '5v5' && b.pitchId === '11v11') || (pitchId === '11v11' && b.pitchId === '5v5'));
+        
+      if (!pitchMatches) return false;
       if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
 
       const bStart = parseTimeToMinutes(b.timeSlot);
@@ -247,6 +320,19 @@ export default function BookingModal({
       setError(
         `This slot overlaps with a session ${statusText} by ${clash.teamName} (${clash.managerName}) from ${clash.timeSlot} to ${clash.endTime || getEndTimeForSlot(clash.pitchId, clash.date, clash.timeSlot)}. Please select another time or pitch.`
       );
+      return;
+    }
+
+    // Raise an issue if same team already booked on same date
+    const teamToCheck = currentUser.role === 'ADMIN' ? adminSelectedTeam : currentUser.teamName;
+    const hasExistingBookingOnSameDate = !!(date && teamToCheck && existingBookings.some((b) => {
+      if (b.id === selectedBookingId || b.date !== date) return false;
+      if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+      return b.teamName === teamToCheck;
+    }));
+
+    if (hasExistingBookingOnSameDate && !confirmDoubleBooking) {
+      setError(`Warning: This team (${teamToCheck}) already has another active booking on this date (${date}). Please check the confirmation box below if you definitely want to do this.`);
       return;
     }
 
@@ -492,6 +578,41 @@ export default function BookingModal({
               className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg p-3 text-slate-700 text-sm focus:border-blue-900 focus:outline-none transition-colors placeholder:text-slate-400"
             />
           </div>
+
+          {/* Double Booking Warning Checklist */}
+          {(() => {
+            const teamToCheck = currentUser.role === 'ADMIN' ? adminSelectedTeam : currentUser.teamName;
+            const hasExistingBookingOnSameDate = !!(date && teamToCheck && existingBookings.some((b) => {
+              if (b.id === selectedBookingId || b.date !== date) return false;
+              if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+              return b.teamName === teamToCheck;
+            }));
+
+            if (!hasExistingBookingOnSameDate) return null;
+
+            return (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3.5 space-y-2.5">
+                <div className="flex items-start space-x-2">
+                  <AlertTriangle className="w-4.5 h-4.5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-900 uppercase tracking-wide">Double Booking Notice</h4>
+                    <p className="text-[11px] text-amber-700 leading-normal mt-0.5">
+                      <strong>{teamToCheck}</strong> is already scheduled for a match or session on <strong>{date}</strong>. Please check the box below if you definitely want to schedule another booking on this date.
+                    </p>
+                  </div>
+                </div>
+                <label className="flex items-center space-x-2.5 font-bold text-xs text-amber-950 mt-1 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={confirmDoubleBooking}
+                    onChange={(e) => setConfirmDoubleBooking(e.target.checked)}
+                    className="rounded border-amber-300 text-amber-600 focus:ring-amber-500 w-4 h-4"
+                  />
+                  <span>Yes, I definitely want to book this additional slot</span>
+                </label>
+              </div>
+            );
+          })()}
 
           {/* Error Message */}
           {error && (

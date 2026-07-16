@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Calendar, ClipboardList, Settings, Shield, User, HelpCircle, CheckCircle, Info, X } from 'lucide-react';
 
 import { Booking, BookingStatus, PitchConfig, PitchSize, SlotChangeRequest, User as UserType } from './types';
-import { DEFAULT_PITCH_CONFIGS, INITIAL_BOOKINGS, INITIAL_SLOT_CHANGES, MOCK_USERS } from './mockData';
+import { DEFAULT_PITCH_CONFIGS, INITIAL_BOOKINGS, INITIAL_SLOT_CHANGES, MOCK_USERS, MOCK_FA_FULLTIME_FIXTURES, FAFixture } from './mockData';
 
 import Header from './components/Header';
 import PitchDiary from './components/PitchDiary';
@@ -28,9 +28,38 @@ export default function App() {
     }));
   });
 
+  const [faFixtures, setFaFixtures] = useState<FAFixture[]>(() => {
+    const saved = localStorage.getItem('scotter_jfc_fa_fixtures');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+    return MOCK_FA_FULLTIME_FIXTURES;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(faFixtures));
+  }, [faFixtures]);
+
   const [pitchConfigs, setPitchConfigs] = useState<PitchConfig[]>(() => {
     const saved = localStorage.getItem('scotter_jfc_pitch_configs');
-    return saved ? JSON.parse(saved) : DEFAULT_PITCH_CONFIGS;
+    let configs: PitchConfig[] = saved ? JSON.parse(saved) : DEFAULT_PITCH_CONFIGS;
+    // Upgrade existing stored configs to new slots automatically
+    configs = configs.map(cfg => {
+      if (cfg.id === '11v11' && (cfg.defaultSlots.includes('09:30') || cfg.defaultSlots.length === 3)) {
+        return { ...cfg, defaultSlots: ['10:00', '12:00', '14:00', '16:00'] };
+      }
+      if (cfg.id === '9v9' && (cfg.defaultSlots.includes('10:45') || cfg.defaultSlots.includes('12:00'))) {
+        return { ...cfg, defaultSlots: ['09:30', '11:00', '12:30'] };
+      }
+      if (cfg.id === '5v5' && (cfg.defaultSlots.includes('09:30') || cfg.defaultSlots.includes('12:00'))) {
+        return { ...cfg, defaultSlots: ['09:45', '10:45', '11:45'] };
+      }
+      if (cfg.id === '7v7' && cfg.defaultSlots.length === 3) {
+        return { ...cfg, defaultSlots: ['09:30', '10:45', '12:00', '13:15'] };
+      }
+      return cfg;
+    });
+    return configs;
   });
 
   const [slotChangeRequests, setSlotChangeRequests] = useState<SlotChangeRequest[]>(() => {
@@ -60,8 +89,8 @@ export default function App() {
     return parsed;
   });
 
-  // Default Selected Date: Saturday, June 27th, 2026 (populated with mock bookings)
-  const [selectedDate, setSelectedDate] = useState('2026-06-27');
+  // Default Selected Date: Current week (dynamically shifted relative to today)
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [activeTab, setActiveTab] = useState<'DIARY' | 'REQUESTS' | 'SLOTS' | 'COACHES'>('DIARY');
 
   // Booking Modal States
@@ -217,18 +246,7 @@ export default function App() {
 
   // Cancel Booking or Request
   const handleCancelBooking = (id: string) => {
-    setBookings((prev) => {
-      const b = prev.find((x) => x.id === id);
-      if (!b) return prev;
-      
-      // If the request was still pending, declined, or already unbooked, we can delete/dismiss it completely
-      if (b.status === BookingStatus.PENDING || b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) {
-        return prev.filter((x) => x.id !== id);
-      }
-      
-      // Otherwise, mark it as UNBOOKED so it stays in the team fixtures table but frees up the slot on the calendar
-      return prev.map((x) => (x.id === id ? { ...x, status: BookingStatus.UNBOOKED } : x));
-    });
+    setBookings((prev) => prev.filter((x) => x.id !== id));
   };
 
   // Update or reschedule an existing booking
@@ -450,6 +468,8 @@ export default function App() {
                   onUpdateBooking={handleUpdateBooking}
                   users={users}
                   onUpdateUsers={setUsers}
+                  faFixtures={faFixtures}
+                  onUpdateFaFixtures={setFaFixtures}
                 />
               )}
 

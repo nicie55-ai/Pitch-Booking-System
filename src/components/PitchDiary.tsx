@@ -18,12 +18,14 @@ import {
   ArrowRight, 
   ShieldCheck,
   Filter,
-  BookOpen
+  BookOpen,
+  Search,
+  Trash2
 } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, PitchConfig, User as UserType } from '../types';
 import AdminPanel from './AdminPanel';
 import { canManagerUnbook, isTeamMatch } from '../utils/bookingUtils';
-import { MOCK_FA_FULLTIME_FIXTURES } from '../mockData';
+import { MOCK_FA_FULLTIME_FIXTURES, FAFixture } from '../mockData';
 
 interface PitchDiaryProps {
   selectedDate: string;
@@ -39,6 +41,8 @@ interface PitchDiaryProps {
   onUpdateBooking?: (id: string, fields: Partial<Booking>) => void;
   users?: UserType[];
   onUpdateUsers?: (newUsers: UserType[]) => void;
+  faFixtures: FAFixture[];
+  onUpdateFaFixtures: (fixtures: FAFixture[] | ((prev: FAFixture[]) => FAFixture[])) => void;
 }
 
 export default function PitchDiary({
@@ -55,6 +59,8 @@ export default function PitchDiary({
   onUpdateBooking,
   users,
   onUpdateUsers,
+  faFixtures,
+  onUpdateFaFixtures,
 }: PitchDiaryProps) {
   // Decline active states for specific booking IDs (to show decline text area)
   const [decliningId, setDecliningId] = useState<string | null>(null);
@@ -64,11 +70,21 @@ export default function PitchDiary({
   const [confirmDismissId, setConfirmDismissId] = useState<string | null>(null);
   const [confirmCancelBookingId, setConfirmCancelBookingId] = useState<string | null>(null);
   const [confirmUnbookFixtureId, setConfirmUnbookFixtureId] = useState<string | null>(null);
+  const [bulkActionConfirming, setBulkActionConfirming] = useState<'UNBOOK' | 'DELETE' | null>(null);
 
   // Sorter / Filter States for the Team Pitch List (underneath calendar)
   const [filterManagerOnly, setFilterManagerOnly] = useState<boolean>(!!currentUser.teamName);
   const [fixturePitchFilter, setFixturePitchFilter] = useState<string>('ALL');
   const [fixtureDateFilter, setFixtureDateFilter] = useState<string>('ALL');
+  const [teamSearchQuery, setTeamSearchQuery] = useState<string>('');
+  const [selectedUnifiedIds, setSelectedUnifiedIds] = useState<string[]>([]);
+
+  // Automatically reset inline bulk confirmation if selection is cleared
+  useEffect(() => {
+    if (selectedUnifiedIds.length === 0) {
+      setBulkActionConfirming(null);
+    }
+  }, [selectedUnifiedIds]);
 
   // Keep filterManagerOnly in sync with selected currentUser's teamName presence
   useEffect(() => {
@@ -140,7 +156,7 @@ export default function PitchDiary({
 
   // 2. Build Unified Team Fixtures & Bookings List underneath
   // Filter FA full time fixtures matching criteria
-  const filteredFAFixtures = MOCK_FA_FULLTIME_FIXTURES.filter((f) => {
+  const filteredFAFixtures = faFixtures.filter((f) => {
     if (filterManagerOnly && (!currentUser.teamName || !isTeamMatch(currentUser.teamName, f.scotterTeam))) {
       return false;
     }
@@ -148,6 +164,9 @@ export default function PitchDiary({
       return false;
     }
     if (fixtureDateFilter !== 'ALL' && f.date !== fixtureDateFilter) {
+      return false;
+    }
+    if (teamSearchQuery.trim() && !f.scotterTeam.toLowerCase().includes(teamSearchQuery.toLowerCase())) {
       return false;
     }
     return true;
@@ -165,8 +184,11 @@ export default function PitchDiary({
     if (fixtureDateFilter !== 'ALL' && b.date !== fixtureDateFilter) {
       return false;
     }
+    if (teamSearchQuery.trim() && !b.teamName.toLowerCase().includes(teamSearchQuery.toLowerCase())) {
+      return false;
+    }
     // Exclude bookings that map to an FA Full-time fixture to prevent duplicates
-    const isMappedToFa = MOCK_FA_FULLTIME_FIXTURES.some(
+    const isMappedToFa = faFixtures.some(
       (f) => f.pitchId === b.pitchId && f.date === b.date && f.timeSlot === b.timeSlot
     );
     return !isMappedToFa;
@@ -174,7 +196,7 @@ export default function PitchDiary({
 
   // Unique list of dates for dropdown filtering
   const uniqueDates = Array.from(new Set([
-    ...MOCK_FA_FULLTIME_FIXTURES.map(f => f.date),
+    ...faFixtures.map(f => f.date),
     ...bookings.map(b => b.date)
   ])).sort();
 
@@ -231,6 +253,14 @@ export default function PitchDiary({
     return a.timeSlot.localeCompare(b.timeSlot);
   });
 
+  const allSelected = unifiedList.length > 0 && unifiedList.every((item) =>
+    selectedUnifiedIds.includes(item.id)
+  );
+
+  const selectedItems = unifiedList.filter((item) => selectedUnifiedIds.includes(item.id));
+  const selectedBookedCount = selectedItems.filter((item) => item.booking && item.booking.status !== BookingStatus.UNBOOKED).length;
+  const selectedUnbookedCount = selectedItems.length - selectedBookedCount;
+
   const parseTimeToMinutes = (t: string): number => {
     if (!t) return 0;
     const [h, m] = t.split(':').map(Number);
@@ -256,16 +286,20 @@ export default function PitchDiary({
     const isWeekend = day === 0 || day === 6;
     if (isWeekend) {
       if (pId === '11v11') {
-        if (slot === '10:00') return '12:00';
-        if (slot === '12:00') return '14:00';
         const [hStr, mStr] = slot.split(':');
         const h = parseInt(hStr, 10) + 2;
         return `${String(h).padStart(2, '0')}:${mStr}`;
-      } else {
-        if (slot === '09:30') return '10:45';
-        if (slot === '10:45') return '12:00';
-        if (slot === '12:00') return '13:15';
-        
+      } else if (pId === '9v9') {
+        const [hStr, mStr] = slot.split(':');
+        const totalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10) + 90;
+        const h = Math.floor(totalMinutes / 60);
+        const m = totalMinutes % 60;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      } else if (pId === '5v5') {
+        const [hStr, mStr] = slot.split(':');
+        const h = parseInt(hStr, 10) + 1;
+        return `${String(h).padStart(2, '0')}:${mStr}`;
+      } else { // 7v7 stays as is (75 min)
         const [hStr, mStr] = slot.split(':');
         const totalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10) + 75;
         const h = Math.floor(totalMinutes / 60);
@@ -281,9 +315,9 @@ export default function PitchDiary({
 
   const WEEKEND_PREBOOKED_BLOCKS: Record<string, Array<{ start: string; end: string }>> = {
     '5v5': [
-      { start: '09:30', end: '10:45' },
-      { start: '10:45', end: '12:00' },
-      { start: '12:00', end: '13:15' },
+      { start: '09:45', end: '10:45' },
+      { start: '10:45', end: '11:45' },
+      { start: '11:45', end: '12:45' },
     ],
     '7v7': [
       { start: '09:30', end: '10:45' },
@@ -291,9 +325,9 @@ export default function PitchDiary({
       { start: '12:00', end: '13:15' },
     ],
     '9v9': [
-      { start: '09:30', end: '10:45' },
-      { start: '10:45', end: '12:00' },
-      { start: '12:00', end: '13:15' },
+      { start: '09:30', end: '11:00' },
+      { start: '11:00', end: '12:30' },
+      { start: '12:30', end: '14:00' },
     ],
     '11v11': [
       { start: '10:00', end: '12:00' },
@@ -346,6 +380,8 @@ export default function PitchDiary({
           onRequestBooking={onRequestBooking}
           users={users}
           onUpdateUsers={onUpdateUsers}
+          faFixtures={faFixtures}
+          onUpdateFaFixtures={onUpdateFaFixtures}
         />
       )}
 
@@ -657,7 +693,9 @@ export default function PitchDiary({
                               height: `${heightPercent}%`,
                             }}
                             className={`absolute left-1 right-1 z-20 p-2.5 rounded-xl border text-left shadow-sm hover:shadow-md hover:z-50 transition-all flex flex-col justify-between group/bookingcard ${
-                              booking.status === BookingStatus.APPROVED
+                              booking.teamName === 'PITCH BLOCKED'
+                                ? 'bg-red-50/80 border-red-200 text-red-950 shadow-red-50/10 hover:bg-red-100/90 bg-[linear-gradient(45deg,rgba(220,38,38,0.02)_25%,transparent_25%,transparent_50%,rgba(220,38,38,0.02)_50%,rgba(220,38,38,0.02)_75%,transparent_75%,transparent)] bg-[length:16px_16px]'
+                                : booking.status === BookingStatus.APPROVED
                                 ? 'bg-emerald-50 border-emerald-300 text-emerald-950 shadow-emerald-50/30 hover:bg-emerald-100/90'
                                 : 'bg-amber-50 border-amber-300 text-amber-950 shadow-amber-50/30 hover:bg-amber-100/90'
                             }`}
@@ -667,9 +705,13 @@ export default function PitchDiary({
                               <div className="space-y-2">
                                 <div className="border-b border-slate-800 pb-1 flex justify-between items-center">
                                   <span className="font-extrabold text-[9px] uppercase tracking-wider text-blue-400">Booking Details</span>
-                                  <span className={`text-[8px] px-1.5 py-0.5 rounded font-bold uppercase ${booking.status === BookingStatus.APPROVED ? 'bg-emerald-900/50 text-emerald-300' : 'bg-amber-900/50 text-amber-300'}`}>{booking.status}</span>
+                                  <span className={`text-[8px] px-1.5 py-0.5 rounded font-bold uppercase ${booking.teamName === 'PITCH BLOCKED' ? 'bg-red-900/50 text-red-300' : booking.status === BookingStatus.APPROVED ? 'bg-emerald-900/50 text-emerald-300' : 'bg-amber-900/50 text-amber-300'}`}>{booking.teamName === 'PITCH BLOCKED' ? 'BLOCKED' : booking.status}</span>
                                 </div>
-                                <p className="font-black text-white text-xs leading-snug">{booking.teamName}</p>
+                                <p className="font-black text-white text-xs leading-snug">
+                                  {booking.teamName === 'PITCH BLOCKED'
+                                    ? (booking.notes ? booking.notes.replace('[BLOCK-OUT] ', '') : 'Pitch Maintenance')
+                                    : booking.teamName}
+                                </p>
                                 <div className="space-y-1 text-slate-300 font-medium font-sans">
                                   <p><strong className="text-slate-500">Booked by:</strong> {booking.managerName}</p>
                                   <p><strong className="text-slate-500">Date & Time:</strong> {new Date(booking.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} from {booking.timeSlot} to {resolvedEndTime}</p>
@@ -690,15 +732,25 @@ export default function PitchDiary({
                             <div className="space-y-1 overflow-hidden">
                               <div className="flex justify-between items-start gap-1">
                                 <div className="flex items-center space-x-1 min-w-0">
-                                  <p className="text-[11px] font-black leading-tight text-slate-900 truncate">
-                                    {booking.teamName}
-                                  </p>
-                                  <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 transition-colors flex-shrink-0" />
+                                  {booking.teamName === 'PITCH BLOCKED' ? (
+                                    <span className="text-[10px] font-black leading-tight text-red-700 uppercase tracking-wider flex items-center gap-1 truncate" title={booking.notes ? booking.notes.replace('[BLOCK-OUT] ', '') : 'Pitch Maintenance'}>
+                                      🔒 {booking.notes ? booking.notes.replace('[BLOCK-OUT] ', '') : 'Pitch Maintenance'}
+                                    </span>
+                                  ) : (
+                                    <>
+                                      <p className="text-[11px] font-black leading-tight text-slate-900 truncate">
+                                        {booking.teamName}
+                                      </p>
+                                      <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 transition-colors flex-shrink-0" />
+                                    </>
+                                  )}
                                 </div>
                                 <span className={`inline-flex items-center text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider ${
-                                  booking.status === BookingStatus.APPROVED ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-850 animate-pulse'
+                                  booking.teamName === 'PITCH BLOCKED'
+                                    ? 'bg-red-100 text-red-800'
+                                    : booking.status === BookingStatus.APPROVED ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-850 animate-pulse'
                                 }`}>
-                                  {booking.status === BookingStatus.APPROVED ? 'Approved' : 'Pending'}
+                                  {booking.teamName === 'PITCH BLOCKED' ? 'System' : booking.status === BookingStatus.APPROVED ? 'Approved' : 'Pending'}
                                 </span>
                               </div>
                               <p className="text-[9px] text-slate-500 font-extrabold uppercase tracking-wide truncate">
@@ -913,8 +965,155 @@ export default function PitchDiary({
                 ))}
               </select>
             </div>
+
+            {/* Search Team */}
+            <div className="flex items-center space-x-1">
+              <span className="text-[10px] font-bold uppercase text-slate-400">Search:</span>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={teamSearchQuery}
+                  onChange={(e) => setTeamSearchQuery(e.target.value)}
+                  placeholder="Filter teams..."
+                  className="bg-slate-50 border-2 border-slate-200 rounded-lg py-1 pl-2 pr-7 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-900 w-32 sm:w-40"
+                />
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2" />
+              </div>
+            </div>
           </div>
         </div>
+
+        {/* Bulk Unbooking / Deletion Action Bar */}
+        {currentUser.role === 'ADMIN' && selectedUnifiedIds.length > 0 && (
+          <div className="bg-slate-50 border-2 border-slate-200 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fade-in shadow-sm mb-6">
+            <div className="flex items-start space-x-3 text-slate-900">
+              <div className="p-2 bg-blue-50 text-blue-600 rounded-xl mt-0.5">
+                <Info className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-sm font-black uppercase tracking-wider text-slate-800">Bulk Admin Operations</p>
+                <p className="text-xs text-slate-500 font-medium mt-0.5">
+                  You have selected <strong className="text-slate-800 font-black">{selectedUnifiedIds.length}</strong> item{selectedUnifiedIds.length !== 1 ? 's' : ''} in total.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-emerald-100 text-emerald-800">
+                    Booked Slots: {selectedBookedCount}
+                  </span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-100 text-amber-800">
+                    Unbooked Fixtures: {selectedUnbookedCount}
+                  </span>
+                </div>
+              </div>
+            </div>
+            
+            {bulkActionConfirming === null ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => setSelectedUnifiedIds([])}
+                  className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-extrabold rounded-lg text-xs transition-colors"
+                >
+                  Clear Selection
+                </button>
+
+                {/* Option A: Unschedule / Unbook */}
+                <button
+                  disabled={selectedBookedCount === 0}
+                  onClick={() => setBulkActionConfirming('UNBOOK')}
+                  className={`px-4 py-2 font-black rounded-lg text-xs flex items-center space-x-1.5 shadow-sm transition-all ${
+                    selectedBookedCount > 0
+                      ? 'bg-amber-500 hover:bg-amber-600 text-white cursor-pointer'
+                      : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                  }`}
+                  title="Cancel pitch booking but keep the fixture in the list"
+                >
+                  <Clock className="w-3.5 h-3.5 mr-1" />
+                  Unschedule Pitches ({selectedBookedCount})
+                </button>
+
+                {/* Option B: Delete Completely */}
+                <button
+                  onClick={() => setBulkActionConfirming('DELETE')}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-black rounded-lg text-xs flex items-center space-x-1.5 shadow-sm transition-all cursor-pointer"
+                  title="Remove match from list entirely and cancel its booking"
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-1" />
+                  Delete Selected ({selectedUnifiedIds.length})
+                </button>
+              </div>
+            ) : bulkActionConfirming === 'UNBOOK' ? (
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-amber-50 border border-amber-200 p-3 rounded-xl animate-fade-in w-full md:w-auto">
+                <div className="text-xs text-amber-950 font-bold">
+                  ⚠️ Unschedule <span className="font-extrabold text-amber-800">{selectedBookedCount}</span> selected booked slot(s)?
+                  <p className="text-[10px] text-amber-600 font-medium mt-0.5">This frees up the pitches but keeps the matches in the list.</p>
+                </div>
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <button
+                    onClick={() => {
+                      const itemsToUnschedule = selectedItems.filter(item => item.booking && item.booking.status !== BookingStatus.UNBOOKED);
+                      itemsToUnschedule.forEach(item => {
+                        if (item.booking) {
+                          onCancelBooking(item.booking.id);
+                        }
+                      });
+                      setSelectedUnifiedIds([]);
+                      setBulkActionConfirming(null);
+                    }}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-lg text-xs transition-colors shadow-sm cursor-pointer"
+                  >
+                    Yes, Unschedule
+                  </button>
+                  <button
+                    onClick={() => setBulkActionConfirming(null)}
+                    className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-extrabold rounded-lg text-xs transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-red-50 border border-red-200 p-3 rounded-xl animate-fade-in w-full md:w-auto">
+                <div className="text-xs text-red-950 font-bold">
+                  🚨 PERMANENTLY DELETE <span className="font-extrabold text-red-800">{selectedUnifiedIds.length}</span> selected scheduled item(s)?
+                  <p className="text-[10px] text-red-600 font-medium mt-0.5">Matches will be completely removed, and bookings cancelled automatically.</p>
+                </div>
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <button
+                    onClick={() => {
+                      // 1. Cancel any active bookings for selected items
+                      const itemsToCancel = selectedItems.filter(item => item.booking);
+                      itemsToCancel.forEach(item => {
+                        if (item.booking) {
+                          onCancelBooking(item.booking.id);
+                        }
+                      });
+
+                      // 2. Remove from faFixtures (using pristine functional callback update for absolute accuracy)
+                      const faFixtureIdsToDelete = selectedItems
+                        .filter(item => item.type === 'FA_FIXTURE')
+                        .map(item => item.id);
+                      
+                      if (faFixtureIdsToDelete.length > 0) {
+                        onUpdateFaFixtures((prevFixtures) => prevFixtures.filter(f => !faFixtureIdsToDelete.includes(f.id)));
+                      }
+
+                      setSelectedUnifiedIds([]);
+                      setBulkActionConfirming(null);
+                    }}
+                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-extrabold rounded-lg text-xs transition-colors shadow-sm cursor-pointer"
+                  >
+                    Yes, Delete Permanently
+                  </button>
+                  <button
+                    onClick={() => setBulkActionConfirming(null)}
+                    className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-extrabold rounded-lg text-xs transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Unified Table display */}
         <div className="overflow-x-auto border border-slate-200 rounded-xl">
@@ -924,43 +1123,75 @@ export default function PitchDiary({
             </div>
           ) : (
             <table className="min-w-full divide-y divide-slate-200 bg-white text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
-                <tr>
-                  <th className="px-5 py-3.5 font-black text-slate-700">Fixture / Match Details</th>
-                  <th className="px-5 py-3.5 font-black text-slate-700">Competition</th>
-                  <th className="px-5 py-3.5 font-black text-slate-700 text-center w-24">Format</th>
-                  <th className="px-5 py-3.5 font-black text-slate-700 w-44">Date & Time</th>
-                  <th className="px-5 py-3.5 font-black text-slate-700 w-40">Booking Status</th>
-                  <th className="px-5 py-3.5 font-black text-slate-700 text-right w-40">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {unifiedList.map((item) => {
-                  const isBooked = !!item.booking && item.booking.status !== BookingStatus.UNBOOKED;
-                  const isUnbooked = item.booking?.status === BookingStatus.UNBOOKED;
-                  const bookingStatus = item.booking?.status;
-                  const formattedDate = new Date(item.date).toLocaleDateString('en-GB', {
-                    weekday: 'short',
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric'
-                  });
+                <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
+                  <tr>
+                    {currentUser.role === 'ADMIN' && (
+                      <th className="px-5 py-3.5 font-black text-slate-700 w-12 text-center">
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedUnifiedIds(unifiedList.map((item) => item.id));
+                            } else {
+                              setSelectedUnifiedIds([]);
+                            }
+                          }}
+                          className="rounded border-slate-300 text-red-600 focus:ring-red-500 w-4 h-4 cursor-pointer"
+                        />
+                      </th>
+                    )}
+                    <th className="px-5 py-3.5 font-black text-slate-700">Fixture / Match Details</th>
+                    <th className="px-5 py-3.5 font-black text-slate-700">Competition</th>
+                    <th className="px-5 py-3.5 font-black text-slate-700 text-center w-24">Format</th>
+                    <th className="px-5 py-3.5 font-black text-slate-700 w-44">Date & Time</th>
+                    <th className="px-5 py-3.5 font-black text-slate-700 w-40">Booking Status</th>
+                    <th className="px-5 py-3.5 font-black text-slate-700 text-right w-40">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {unifiedList.map((item) => {
+                    const isBooked = !!item.booking && item.booking.status !== BookingStatus.UNBOOKED;
+                    const isUnbooked = item.booking?.status === BookingStatus.UNBOOKED;
+                    const bookingStatus = item.booking?.status;
+                    const formattedDate = new Date(item.date).toLocaleDateString('en-GB', {
+                      weekday: 'short',
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric'
+                    });
 
-                  return (
-                    <tr
-                      key={`${item.type}-${item.id}`}
-                      className={`hover:bg-slate-50/40 transition-colors ${
-                        isBooked
-                          ? bookingStatus === BookingStatus.APPROVED
-                            ? 'bg-emerald-50/15'
-                            : 'bg-amber-50/15'
-                          : isUnbooked
-                          ? 'bg-rose-50/20'
-                          : ''
-                      }`}
-                    >
-                      {/* Fixture Details */}
-                      <td className="px-5 py-4">
+                    return (
+                      <tr
+                        key={`${item.type}-${item.id}`}
+                        className={`hover:bg-slate-50/40 transition-colors ${
+                          isBooked
+                            ? bookingStatus === BookingStatus.APPROVED
+                              ? 'bg-emerald-50/15'
+                              : 'bg-amber-50/15'
+                            : isUnbooked
+                            ? 'bg-rose-50/20'
+                            : ''
+                        }`}
+                      >
+                        {currentUser.role === 'ADMIN' && (
+                          <td className="px-5 py-4 text-center whitespace-nowrap">
+                            <input
+                              type="checkbox"
+                              checked={selectedUnifiedIds.includes(item.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedUnifiedIds((prev) => [...prev, item.id]);
+                                } else {
+                                  setSelectedUnifiedIds((prev) => prev.filter((id) => id !== item.id));
+                                }
+                              }}
+                              className="rounded border-slate-300 text-red-600 focus:ring-red-500 w-4 h-4 cursor-pointer"
+                            />
+                          </td>
+                        )}
+                        {/* Fixture Details */}
+                        <td className="px-5 py-4">
                         <div className="space-y-1">
                           <div className="font-extrabold text-slate-900 text-sm">{item.title}</div>
                           <div className="flex items-center space-x-2">

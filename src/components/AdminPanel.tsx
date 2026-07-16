@@ -22,14 +22,201 @@ import {
   Sparkles,
   Info,
   Trash2,
+  HelpCircle,
   Wand2,
   CheckCircle,
   Key,
-  ShieldAlert
+  ShieldAlert,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  ArrowRightLeft,
+  Shield,
+  Lock
 } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, PitchConfig, User } from '../types';
 import { SCOTTER_TEAMS, MOCK_FA_FULLTIME_FIXTURES, FAFixture, ClubTeam } from '../mockData';
 import { canManagerUnbook, isTeamMatch } from '../utils/bookingUtils';
+
+// --- Top-Level Stateless Helpers (Hoisted and safe from Temporal Dead Zone) ---
+
+function parseTimeToMinutes(t: string): number {
+  if (!t) return 0;
+  const [h, m] = t.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function getAdminEndTimeForSlot(pId: PitchSize, dateStr: string, slot: string): string {
+  if (!slot || !dateStr) return '';
+  const d = new Date(dateStr);
+  const day = d.getDay();
+  const isWeekend = day === 0 || day === 6;
+  let duration = 60; // default 1 hour
+  
+  if (isWeekend) {
+    if (pId === '11v11') {
+      duration = 120;
+    } else if (pId === '9v9') {
+      duration = 90;
+    } else if (pId === '7v7') {
+      duration = 75;
+    } else if (pId === '5v5') {
+      duration = 60;
+    }
+  } else {
+    duration = 60;
+  }
+  
+  const [hStr, mStr] = slot.split(':');
+  const hNum = parseInt(hStr, 10);
+  const mNum = parseInt(mStr, 10);
+  if (isNaN(hNum) || isNaN(mNum)) return '';
+  
+  const totalMinutes = hNum * 60 + mNum + duration;
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function parseFullTimeTabLine(line: string) {
+  const cols = line.split('\t').map(c => c.trim());
+  if (cols.length < 5) return null;
+
+  const vsIdx = cols.findIndex(c => c.toLowerCase() === 'vs');
+  if (vsIdx === -1) return null;
+
+  const type = cols[0];
+  const dateTimeStr = cols[1];
+
+  let date = '';
+  let timeSlot = '09:30';
+  let hasExplicitTime = false;
+
+  const dateRegex = /(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})/;
+  const dateMatch = dateTimeStr.match(dateRegex);
+  if (dateMatch) {
+    let day = dateMatch[1].padStart(2, '0');
+    let month = dateMatch[2].padStart(2, '0');
+    let year = dateMatch[3];
+    if (year.length === 2) year = '20' + year;
+    date = `${year}-${month}-${day}`;
+  }
+
+  const timeRegex = /(\d{1,2}):(\d{2})/;
+  const timeMatch = dateTimeStr.match(timeRegex);
+  if (timeMatch) {
+    timeSlot = `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`;
+    hasExplicitTime = true;
+  }
+
+  // Home Team is the first non-empty column in cols.slice(2, vsIdx)
+  const homeTeam = cols.slice(2, vsIdx).find(c => c !== '') || 'Home Team';
+
+  // Away Team is the first non-empty column in cols.slice(vsIdx + 1)
+  const awayCols = cols.slice(vsIdx + 1).filter(c => c !== '');
+  if (awayCols.length === 0) return null;
+
+  const awayTeam = awayCols[0];
+
+  const remainingCols = awayCols.slice(1).filter(c => c !== awayTeam);
+  
+  let venue = '';
+  let competition = '';
+  let statusNotes = '';
+
+  const compRegex = /\b(u\d+|under\s+\d+|supreme|premier|divisional|division|cup|league|trophy|plate|january|february|march|april|may|june|july|august|september|october|november|december)\b/i;
+
+  remainingCols.forEach(col => {
+    const cl = col.toLowerCase();
+    if (cl === 'postponed' || cl === 'cancelled' || cl === 'post' || cl === 'postp') {
+      statusNotes = col;
+    } else if (compRegex.test(col)) {
+      competition = col;
+    } else {
+      venue = col;
+    }
+  });
+
+  if (!competition) {
+    competition = remainingCols[remainingCols.length - 1] || 'FA League Match';
+  }
+  if (!venue && remainingCols.length > 0) {
+    venue = remainingCols[0];
+  }
+
+  return {
+    type,
+    date,
+    timeSlot,
+    hasExplicitTime,
+    homeTeam,
+    awayTeam,
+    venue,
+    competition,
+    statusNotes
+  };
+}
+
+function findBestTeamMatch(pastedName: string): string {
+  const cleanWord = (wd: string) => wd.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/s$/, ''); // normalize "u10s" -> "u10"
+  
+  const normalized = pastedName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!normalized) return SCOTTER_TEAMS[0].name;
+
+  // First, let's check for exact word combinations
+  for (const team of SCOTTER_TEAMS) {
+    const tName = team.name.toLowerCase();
+    const tNorm = tName.replace(/[^a-z0-9]/g, '');
+    if (tNorm === normalized) {
+      return team.name;
+    }
+  }
+
+  // Overlap matching
+  let bestMatch = '';
+  let highestScore = 0;
+  const pastedWords = pastedName.toLowerCase().split(/\s+/).map(cleanWord).filter(Boolean);
+
+  for (const team of SCOTTER_TEAMS) {
+    const teamWords = team.name.toLowerCase().split(/\s+/).map(cleanWord).filter(Boolean);
+    let score = 0;
+
+    pastedWords.forEach((pw) => {
+      teamWords.forEach((tw) => {
+        if (tw === pw || tw.includes(pw) || pw.includes(tw)) {
+          score += 1;
+          // Heavy weight for matching age groups (like u7, u10)
+          if (pw.match(/^u\d+$/) || pw.match(/^under\d+$/)) {
+            score += 15;
+          }
+          // Suffix formats weights (saints, juniors, colts, girls)
+          if (pw === 'saints' || pw === 'juniors' || pw === 'junior' || pw === 'colts' || pw === 'girls') {
+            score += 5;
+          }
+        }
+      });
+    });
+
+    if (score > highestScore) {
+      highestScore = score;
+      bestMatch = team.name;
+    }
+  }
+
+  return bestMatch || SCOTTER_TEAMS[0].name;
+}
+
+const ALL_COMMON_SLOTS = [
+  '08:30', '09:00', '09:30', '10:00', '10:30', '10:45', '11:00', '11:30', 
+  '12:00', '12:30', '13:00', '13:15', '13:30', '14:00', '14:30', '15:00', 
+  '15:30', '16:00', '16:30', '17:00'
+];
+
+function isNameMismatch(fixture: FAFixture) {
+  const original = fixture.homeTeam.replace(/^Scotter\s+(United\s+)?/i, '').trim().toLowerCase();
+  const mapped = fixture.scotterTeam.replace(/^Scotter\s+(United\s+)?/i, '').trim().toLowerCase();
+  return original !== mapped;
+}
 
 interface AdminPanelProps {
   bookings: Booking[];
@@ -42,6 +229,8 @@ interface AdminPanelProps {
   onRequestBooking?: (pitchId: PitchSize, slot: string, notes?: string, date?: string, existingBookingId?: string) => void;
   users?: User[];
   onUpdateUsers?: (newUsers: User[]) => void;
+  faFixtures: FAFixture[];
+  onUpdateFaFixtures: (fixtures: FAFixture[]) => void;
 }
 
 export default function AdminPanel({
@@ -55,9 +244,222 @@ export default function AdminPanel({
   onRequestBooking,
   users = [],
   onUpdateUsers,
+  faFixtures,
+  onUpdateFaFixtures,
 }: AdminPanelProps) {
+  // Extract Home and Away team names from booking notes or fallback to teamName
+  const getHomeAndAwayForBooking = (b: Booking): { homeTeam: string; awayTeam: string } => {
+    const faRegex = /\[FA Full-Time Auto-Import\]\s*[^:]+:\s*(.*?)\s+vs\s+(.*)/i;
+    const match = b.notes.match(faRegex);
+    if (match) {
+      return {
+        homeTeam: match[1].trim(),
+        awayTeam: match[2].trim()
+      };
+    }
+
+    const vsRegex = /(?:vs|v|against|-)\s+(.*)/i;
+    const vsMatch = b.notes.match(vsRegex);
+    if (vsMatch) {
+      return {
+        homeTeam: b.teamName,
+        awayTeam: vsMatch[1].trim()
+      };
+    }
+
+    return {
+      homeTeam: b.teamName,
+      awayTeam: 'Away Team'
+    };
+  };
+
+  // Admin rules state
+  const [rules, setRules] = useState({
+    prevent5v5_11v11Overlap: true,
+    maxHomeGamesPerWeek: true,
+    fairDistributionOfKickoffs: true,
+  });
+
+  const [aiPolicyPrompt, setAiPolicyPrompt] = useState('');
+  const [aiPolicyStatus, setAiPolicyStatus] = useState<{
+    success: boolean;
+    message: string;
+    changes: string[];
+  } | null>(null);
+
+  const handleApplyAiPolicy = (prompt: string) => {
+    if (!prompt.trim()) return;
+    const lower = prompt.toLowerCase();
+    const updatedRules = { ...rules };
+    const changeLogs: string[] = [];
+
+    // Check for overlap rule changes
+    if (lower.includes('overlap') || lower.includes('5v5') || lower.includes('11v11')) {
+      if (lower.includes('disable') || lower.includes('off') || lower.includes('stop') || lower.includes('remove') || lower.includes('no prevent')) {
+        updatedRules.prevent5v5_11v11Overlap = false;
+        changeLogs.push('5v5 & 11v11 Overlap Prevention: DISABLED ❌');
+      } else if (lower.includes('enable') || lower.includes('on') || lower.includes('activate') || lower.includes('prevent')) {
+        updatedRules.prevent5v5_11v11Overlap = true;
+        changeLogs.push('5v5 & 11v11 Overlap Prevention: ENABLED ✅');
+      }
+    }
+
+    // Check for home match warnings
+    if (lower.includes('home') || lower.includes('limit') || lower.includes('warning') || lower.includes('max home')) {
+      if (lower.includes('disable') || lower.includes('off') || lower.includes('stop') || lower.includes('remove') || lower.includes('no warn')) {
+        updatedRules.maxHomeGamesPerWeek = false;
+        changeLogs.push('Weekly Home Match Warning: DISABLED ❌');
+      } else if (lower.includes('enable') || lower.includes('on') || lower.includes('activate') || lower.includes('warn')) {
+        updatedRules.maxHomeGamesPerWeek = true;
+        changeLogs.push('Weekly Home Match Warning: ENABLED ✅');
+      }
+    }
+
+    // Check for fair kickoff distribution policy
+    if (lower.includes('fair') || lower.includes('distribut') || lower.includes('even') || lower.includes('kickoff') || lower.includes('kick-off') || lower.includes('early')) {
+      if (lower.includes('disable') || lower.includes('off') || lower.includes('stop') || lower.includes('remove')) {
+        updatedRules.fairDistributionOfKickoffs = false;
+        changeLogs.push('Fair Fixture Distribution Policy: DISABLED ❌');
+      } else if (lower.includes('enable') || lower.includes('on') || lower.includes('activate') || lower.includes('spread') || lower.includes('fair')) {
+        updatedRules.fairDistributionOfKickoffs = true;
+        changeLogs.push('Fair Fixture Distribution Policy: ENABLED ✅');
+      }
+    }
+
+    if (changeLogs.length > 0) {
+      setRules(updatedRules as any);
+      setAiPolicyStatus({
+        success: true,
+        message: `System Policy AI has processed your instructions: "${prompt}"`,
+        changes: changeLogs,
+      });
+    } else {
+      setAiPolicyStatus({
+        success: false,
+        message: `I analyzed your instruction "${prompt}" but couldn't map it to any standard constraints. Try terms like "overlap", "home games", "fair kickoff", or specify "enable"/"disable".`,
+        changes: [],
+      });
+    }
+  };
+
+  const [customRules, setCustomRules] = useState<string[]>([
+    "Junior matches (U11 and under) have priority scheduling for Saturday morning slots before 11:30.",
+    "No commercial or non-club bookings are permitted on Sunday afternoons."
+  ]);
+
+  // Overlapping slots calculation (detecting actual overlapping times on the same pitch or overlapping 5v5/11v11 pitches)
+  const overlappingIssues = (() => {
+    const activeBookings = bookings.filter(b => b.status === BookingStatus.APPROVED || b.status === BookingStatus.PENDING);
+    
+    const issues: Array<{
+      id: string;
+      date: string;
+      pitchId: PitchSize;
+      bookings: Booking[];
+    }> = [];
+
+    const processedBookingIds = new Set<string>();
+
+    activeBookings.forEach(b1 => {
+      const b1Start = parseTimeToMinutes(b1.timeSlot);
+      const b1End = parseTimeToMinutes(b1.endTime || getAdminEndTimeForSlot(b1.pitchId, b1.date, b1.timeSlot));
+
+      const overlaps = activeBookings.filter(b2 => {
+        if (b1.id === b2.id || b1.date !== b2.date) return false;
+        
+        // Pitch overlap check (same pitch, or 5v5 and 11v11 overlap)
+        const pitchMatches = b1.pitchId === b2.pitchId || 
+          (rules.prevent5v5_11v11Overlap && ((b1.pitchId === '5v5' && b2.pitchId === '11v11') || (b1.pitchId === '11v11' && b2.pitchId === '5v5')));
+        if (!pitchMatches) return false;
+
+        const b2Start = parseTimeToMinutes(b2.timeSlot);
+        const b2End = parseTimeToMinutes(b2.endTime || getAdminEndTimeForSlot(b2.pitchId, b2.date, b2.timeSlot));
+
+        return b1Start < b2End && b2Start < b1End;
+      });
+
+      if (overlaps.length > 0) {
+        // Group these overlapping bookings
+        const allOverlaps = [b1, ...overlaps].sort((a, b) => a.timeSlot.localeCompare(b.timeSlot));
+        const keyId = allOverlaps.map(o => o.id).sort().join('_');
+        
+        if (!processedBookingIds.has(keyId)) {
+          processedBookingIds.add(keyId);
+          issues.push({
+            id: keyId,
+            date: b1.date,
+            pitchId: b1.pitchId, // Main pitch format
+            bookings: allOverlaps
+          });
+        }
+      }
+    });
+
+    return issues.sort((a, b) => a.date.localeCompare(b.date));
+  })();
+
   // Default to FULLTIME (Fixtures Loader) for both Admin and Managers
-  const [activeSubTab, setActiveSubTab] = useState<'BLOCK' | 'FULLTIME'>('FULLTIME');
+  const [activeSubTab, setActiveSubTab] = useState<'BLOCK' | 'FULLTIME' | 'RULES' | 'BLOCK_OUT'>('FULLTIME');
+
+  // Pitch Block-Out States
+  const [blockOutStartDate, setBlockOutStartDate] = useState<string>(selectedDate);
+  const [blockOutEndDate, setBlockOutEndDate] = useState<string>(selectedDate);
+  const [blockOutPitchId, setBlockOutPitchId] = useState<PitchSize | 'ALL'>('ALL');
+  const [blockOutReason, setBlockOutReason] = useState<string>('Pitch Maintenance');
+  const [blockOutSuccess, setBlockOutSuccess] = useState<string | null>(null);
+  const [blockOutError, setBlockOutError] = useState<string | null>(null);
+
+  const handleCreateBlockOutRange = (e: React.FormEvent) => {
+    e.preventDefault();
+    setBlockOutSuccess(null);
+    setBlockOutError(null);
+
+    if (!blockOutStartDate || !blockOutEndDate) {
+      setBlockOutError('Please select both start and end dates.');
+      return;
+    }
+
+    if (new Date(blockOutStartDate) > new Date(blockOutEndDate)) {
+      setBlockOutError('Start Date must be on or before End Date.');
+      return;
+    }
+
+    const datesList: string[] = [];
+    const current = new Date(blockOutStartDate);
+    const end = new Date(blockOutEndDate);
+    while (current <= end) {
+      datesList.push(current.toISOString().split('T')[0]);
+      current.setDate(current.getDate() + 1);
+    }
+
+    const pitchesToBlock: PitchSize[] = blockOutPitchId === 'ALL' 
+      ? ['11v11', '9v9', '7v7', '5v5'] 
+      : [blockOutPitchId];
+
+    const newBlockOutBookings: Booking[] = [];
+
+    datesList.forEach((date) => {
+      pitchesToBlock.forEach((pId) => {
+        newBlockOutBookings.push({
+          id: `blockout-${pId}-${date}`,
+          pitchId: pId,
+          date,
+          timeSlot: '09:00',
+          endTime: '22:00',
+          teamName: 'PITCH BLOCKED',
+          managerName: 'System Admin',
+          managerId: 'admin',
+          status: BookingStatus.APPROVED,
+          notes: `[BLOCK-OUT] ${blockOutReason}`,
+          createdAt: new Date().toISOString(),
+          bookingType: 'MATCH',
+        });
+      });
+    });
+
+    onAddBookingsBulk(newBlockOutBookings);
+    setBlockOutSuccess(`Successfully blocked out ${pitchesToBlock.length} pitches for ${datesList.length} day(s) (whole day: 09:00 - 22:00) between ${blockOutStartDate} and ${blockOutEndDate}.`);
+  };
 
   // Block booking state
   const [selectedTeam, setSelectedTeam] = useState<string>('');
@@ -73,11 +475,21 @@ export default function AdminPanel({
   const [blockBookingSuccess, setBlockBookingSuccess] = useState<string | null>(null);
   const [blockBookingError, setBlockBookingError] = useState<string | null>(null);
 
+  // States for editing block bookings inside the Rules & Block Times tab
+  const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
+  const [editDate, setEditDate] = useState('');
+  const [editSlot, setEditSlot] = useState('');
+  const [editPitch, setEditPitch] = useState<PitchSize>('11v11');
+  const [editNotes, setEditNotes] = useState('');
+
   // FA Full Time state
   const [faClubId, setFaClubId] = useState<string>('SCOT-U-JFC-09');
   const [isSearchingFA, setIsSearchingFA] = useState<boolean>(false);
   const [faFixturesLoaded, setFaFixturesLoaded] = useState<boolean>(false);
-  const [loadedFixtures, setLoadedFixtures] = useState<FAFixture[]>([]);
+  const loadedFixtures = faFixtures;
+  const setLoadedFixtures = (updater: FAFixture[] | ((prev: FAFixture[]) => FAFixture[])) => {
+    onUpdateFaFixtures(typeof updater === 'function' ? updater(faFixtures) : updater);
+  };
   const [importFeedback, setImportFeedback] = useState<string | null>(null);
 
   // Coach Setup Form State
@@ -92,6 +504,8 @@ export default function AdminPanel({
   const [pasteText, setPasteText] = useState('');
   const [parsedFixtures, setParsedFixtures] = useState<FAFixture[]>([]);
   const [selectedParsedIds, setSelectedParsedIds] = useState<string[]>([]);
+  const [parsedSortField, setParsedSortField] = useState<'pitch' | 'date' | 'time' | 'homeTeam' | 'scotterTeam' | 'awayTeam' | null>('date');
+  const [parsedSortAsc, setParsedSortAsc] = useState<boolean>(true);
   const [bulkRemapTeam, setBulkRemapTeam] = useState('');
   const [fulltimeMode, setFulltimeMode] = useState<'PASTE' | 'API'>('PASTE');
 
@@ -99,6 +513,7 @@ export default function AdminPanel({
   const [faFilterTeam, setFaFilterTeam] = useState<string>('');
   const [faFilterPitch, setFaFilterPitch] = useState<string>('');
   const [faFilterDate, setFaFilterDate] = useState<string>('');
+  const [faFilterPeriod, setFaFilterPeriod] = useState<string>('ALL');
   const [selectedFixtureIds, setSelectedFixtureIds] = useState<string[]>([]);
   const [confirmUnbookFixtureId, setConfirmUnbookFixtureId] = useState<string | null>(null);
 
@@ -106,6 +521,13 @@ export default function AdminPanel({
   const [resolvingClashId, setResolvingClashId] = useState<string | null>(null);
   const [alternativeSlot, setAlternativeSlot] = useState<string>('');
   const [existingBookingSlot, setExistingBookingSlot] = useState<string>('');
+  const [rearrangeDate, setRearrangeDate] = useState<string>('');
+  const [rearrangePitch, setRearrangePitch] = useState<PitchSize>('11v11');
+  const [rearrangeSlot, setRearrangeSlot] = useState<string>('');
+
+  // Sort state for loaded FA fixtures
+  const [faSortField, setFaSortField] = useState<'date' | 'pitch' | 'team'>('date');
+  const [faSortAsc, setFaSortAsc] = useState<boolean>(true);
 
   // Automatically adjust pitch size when team is selected
   const handleTeamChange = (teamName: string) => {
@@ -177,14 +599,21 @@ export default function AdminPanel({
         }
       }
 
-      // Check if slot is already taken on this date
-      const clash = bookings.find(
-        (b) =>
-          b.pitchId === pitchSize &&
-          b.date === formattedDate &&
-          b.timeSlot === currentSlot &&
-          b.status !== BookingStatus.DECLINED
-      );
+      // Check if slot overlaps with an existing booking on this date
+      const currentStart = parseTimeToMinutes(currentSlot);
+      const currentEnd = parseTimeToMinutes(getAdminEndTimeForSlot(pitchSize, formattedDate, currentSlot));
+
+      const clash = bookings.find((b) => {
+        const pitchMatches = b.pitchId === pitchSize || 
+          (rules.prevent5v5_11v11Overlap && ((pitchSize === '5v5' && b.pitchId === '11v11') || (pitchSize === '11v11' && b.pitchId === '5v5')));
+        if (!pitchMatches || b.date !== formattedDate) return false;
+        if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+
+        const bStart = parseTimeToMinutes(b.timeSlot);
+        const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+
+        return currentStart < bEnd && bStart < currentEnd;
+      });
 
       if (clash) {
         clashDates.push(`${formattedDate} @ ${currentSlot} (${clash.teamName})`);
@@ -233,14 +662,16 @@ export default function AdminPanel({
     setFaFilterTeam('');
     setFaFilterPitch('');
     setFaFilterDate('');
+    setFaFilterPeriod('ALL');
 
     setTimeout(() => {
       setIsSearchingFA(false);
       setFaFixturesLoaded(true);
-      setLoadedFixtures(MOCK_FA_FULLTIME_FIXTURES);
+      const optimized = optimizeFixturesSlots(MOCK_FA_FULLTIME_FIXTURES);
+      setLoadedFixtures(optimized);
       
       // Auto-select all vacant fixtures initially
-      const vacantIds = MOCK_FA_FULLTIME_FIXTURES
+      const vacantIds = optimized
         .filter(f => {
           const status = bookings.find(
             (b) =>
@@ -259,14 +690,52 @@ export default function AdminPanel({
   /**
    * Differentiate between Vacant, Booked by the SAME team, or CLASH (booked by a different team)
    */
-  const getFixtureStatus = (fixture: FAFixture) => {
-    const existing = bookings.find(
-      (b) =>
-        b.pitchId === fixture.pitchId &&
-        b.date === fixture.date &&
-        b.timeSlot === fixture.timeSlot &&
-        b.status === BookingStatus.APPROVED
-    );
+  function getFixtureStatus(fixture: FAFixture) {
+    // Check if there is ANY approved booking for this fixture on this pitch/date,
+    // even if rescheduled to a different timeslot (Option A resolution)
+    const rescheduledOrBooked = bookings.find((b) => {
+      if (b.pitchId !== fixture.pitchId || b.date !== fixture.date) return false;
+      if (b.status !== BookingStatus.APPROVED) return false;
+
+      // Must match the scotterTeam
+      const isSameTeam =
+        b.teamName.toLowerCase().trim() === fixture.scotterTeam.toLowerCase().trim() ||
+        b.teamName.toLowerCase().includes(fixture.scotterTeam.toLowerCase()) ||
+        fixture.scotterTeam.toLowerCase().includes(b.teamName.toLowerCase());
+      if (!isSameTeam) return false;
+
+      // Direct time match, or check if the booking notes references this fixture
+      const isDirectTimeMatch = b.timeSlot === fixture.timeSlot;
+      const hasFixtureNotes = b.notes && (
+        b.notes.toLowerCase().includes(fixture.homeTeam.toLowerCase()) ||
+        b.notes.toLowerCase().includes(fixture.awayTeam.toLowerCase())
+      );
+
+      return isDirectTimeMatch || hasFixtureNotes;
+    });
+
+    if (rescheduledOrBooked) {
+      if (rescheduledOrBooked.timeSlot === fixture.timeSlot) {
+        return { type: 'BOOKED_SELF', booking: rescheduledOrBooked };
+      } else {
+        return { type: 'RESOLVED_CLASH', booking: rescheduledOrBooked };
+      }
+    }
+
+    const fStart = parseTimeToMinutes(fixture.timeSlot);
+    const fEnd = parseTimeToMinutes(getAdminEndTimeForSlot(fixture.pitchId, fixture.date, fixture.timeSlot));
+
+    const existing = bookings.find((b) => {
+      const pitchMatches = b.pitchId === fixture.pitchId || 
+        (rules.prevent5v5_11v11Overlap && ((fixture.pitchId === '5v5' && b.pitchId === '11v11') || (fixture.pitchId === '11v11' && b.pitchId === '5v5')));
+      if (!pitchMatches || b.date !== fixture.date) return false;
+      if (b.status !== BookingStatus.APPROVED) return false;
+
+      const bStart = parseTimeToMinutes(b.timeSlot);
+      const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+
+      return fStart < bEnd && bStart < fEnd;
+    });
 
     if (!existing) {
       return { type: 'VACANT', booking: null };
@@ -283,21 +752,52 @@ export default function AdminPanel({
     }
 
     return { type: 'CLASH', booking: existing };
-  };
+  }
 
   /**
    * Retrieves vacant slots for a given pitch format and date
    */
-  const getVacantSlots = (pitchId: PitchSize, date: string) => {
+  function getVacantSlots(pitchId: PitchSize, date: string) {
     const config = pitchConfigs.find((p) => p.id === pitchId);
     if (!config) return [];
 
-    const bookedSlots = bookings
-      .filter((b) => b.pitchId === pitchId && b.date === date && b.status === BookingStatus.APPROVED)
-      .map((b) => b.timeSlot);
+    return config.defaultSlots.filter((slot) => {
+      const slotStart = parseTimeToMinutes(slot);
+      const slotEnd = parseTimeToMinutes(getAdminEndTimeForSlot(pitchId, date, slot));
 
-    return config.defaultSlots.filter((slot) => !bookedSlots.includes(slot));
-  };
+      // Check if this slot overlaps with ANY approved/pending diary bookings on this pitch
+      const hasClash = bookings.some((b) => {
+        if (b.pitchId !== pitchId || b.date !== date) return false;
+        if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+
+        const bStart = parseTimeToMinutes(b.timeSlot);
+        const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+
+        return slotStart < bEnd && bStart < slotEnd;
+      });
+
+      if (hasClash) return false;
+
+      // Check if 5v5 and 11v11 overlap prevention is enabled and active
+      if (rules.prevent5v5_11v11Overlap) {
+        if (pitchId === '11v11' || pitchId === '5v5') {
+          const crossPitchId: PitchSize = pitchId === '11v11' ? '5v5' : '11v11';
+          const hasCrossClash = bookings.some((b) => {
+            if (b.pitchId !== crossPitchId || b.date !== date) return false;
+            if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+
+            const bStart = parseTimeToMinutes(b.timeSlot);
+            const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+
+            return slotStart < bEnd && bStart < slotEnd;
+          });
+          if (hasCrossClash) return false;
+        }
+      }
+
+      return true;
+    });
+  }
 
   /**
    * Option A: Reschedule the incoming FA fixture to a vacant slot
@@ -400,17 +900,94 @@ export default function AdminPanel({
     setImportFeedback(`Successfully imported fixture: ${fixture.homeTeam} vs ${fixture.awayTeam}!`);
   };
 
-  // Filtered fixtures computed list
+  // Rearrange a loaded fixture details (and optionally move its diary booking if already booked)
+  const handleSaveFixtureRearrangement = (fixtureId: string, newDate: string, newPitch: PitchSize, newTime: string) => {
+    const prevFixture = loadedFixtures.find(f => f.id === fixtureId);
+    if (!prevFixture) return;
+
+    setLoadedFixtures(prev => prev.map(f => {
+      if (f.id === fixtureId) {
+        return {
+          ...f,
+          date: newDate,
+          pitchId: newPitch,
+          timeSlot: newTime
+        };
+      }
+      return f;
+    }));
+
+    // Find if there is an approved diary booking that corresponds to this fixture BEFORE the update.
+    const relatedBooking = bookings.find(b => {
+      if (b.status !== BookingStatus.APPROVED) return false;
+      
+      const isSameTeam =
+        b.teamName.toLowerCase().trim() === prevFixture.scotterTeam.toLowerCase().trim() ||
+        b.teamName.toLowerCase().includes(prevFixture.scotterTeam.toLowerCase()) ||
+        prevFixture.scotterTeam.toLowerCase().includes(b.teamName.toLowerCase());
+      
+      const hasFixtureNotes = b.notes && (
+        b.notes.toLowerCase().includes(prevFixture.homeTeam.toLowerCase()) ||
+        b.notes.toLowerCase().includes(prevFixture.awayTeam.toLowerCase())
+      );
+      
+      return isSameTeam && (b.date === prevFixture.date || hasFixtureNotes);
+    });
+
+    if (relatedBooking && onUpdateBooking) {
+      onUpdateBooking(relatedBooking.id, {
+        date: newDate,
+        pitchId: newPitch,
+        timeSlot: newTime,
+        notes: `[FA Full-Time Rearranged] ${prevFixture.competition}: ${prevFixture.homeTeam} vs ${prevFixture.awayTeam} (Rearranged to ${newTime} on ${newDate})`
+      });
+      setImportFeedback(`Successfully rearranged "${prevFixture.homeTeam} vs ${prevFixture.awayTeam}" to ${newDate} ${newTime} on ${newPitch} and updated its active diary booking!`);
+    } else {
+      setImportFeedback(`Successfully rearranged "${prevFixture.homeTeam} vs ${prevFixture.awayTeam}" to ${newDate} ${newTime} on ${newPitch}!`);
+    }
+
+    setResolvingClashId(null);
+  };
+
+  // Filtered and Sorted fixtures computed list
   const filteredFixtures = loadedFixtures.filter((f) => {
     const matchesTeam = !faFilterTeam || f.scotterTeam === faFilterTeam;
     const matchesPitch = !faFilterPitch || f.pitchId === faFilterPitch;
     const matchesDate = !faFilterDate || f.date === faFilterDate;
-    return matchesTeam && matchesPitch && matchesDate;
+    
+    let matchesPeriod = true;
+    if (faFilterPeriod === 'PAST_MARCH_APRIL') {
+      matchesPeriod = f.date >= '2026-03-01' && f.date <= '2026-04-30';
+    } else if (faFilterPeriod === 'PAST_JUNE') {
+      matchesPeriod = f.date >= '2026-06-01' && f.date <= '2026-06-30';
+    } else if (faFilterPeriod === 'UPCOMING') {
+      matchesPeriod = f.date >= '2026-07-01';
+    }
+    
+    return matchesTeam && matchesPitch && matchesDate && matchesPeriod;
+  }).sort((a, b) => {
+    const multiplier = faSortAsc ? 1 : -1;
+    if (faSortField === 'date') {
+      if (a.date !== b.date) {
+        return a.date.localeCompare(b.date) * multiplier;
+      }
+      return a.timeSlot.localeCompare(b.timeSlot) * multiplier;
+    }
+    if (faSortField === 'pitch') {
+      if (a.pitchId !== b.pitchId) {
+        return a.pitchId.localeCompare(b.pitchId) * multiplier;
+      }
+      return a.date.localeCompare(b.date) * multiplier;
+    }
+    if (faSortField === 'team') {
+      const aTeam = a.scotterTeam || a.homeTeam;
+      const bTeam = b.scotterTeam || b.homeTeam;
+      return aTeam.localeCompare(bTeam) * multiplier;
+    }
+    return 0;
   });
 
-  const selectableFilteredFixtures = filteredFixtures.filter(
-    (f) => getFixtureStatus(f).type === 'VACANT' || getFixtureStatus(f).type === 'BOOKED_SELF'
-  );
+  const selectableFilteredFixtures = filteredFixtures;
   const allSelectableFilteredSelected =
     selectableFilteredFixtures.length > 0 &&
     selectableFilteredFixtures.every((f) => selectedFixtureIds.includes(f.id));
@@ -430,9 +1007,7 @@ export default function AdminPanel({
   };
 
   const handleToggleSelectAllOverall = () => {
-    const allSelectable = loadedFixtures.filter(
-      (f) => getFixtureStatus(f).type === 'VACANT' || getFixtureStatus(f).type === 'BOOKED_SELF'
-    );
+    const allSelectable = loadedFixtures;
     const allSelectableIds = allSelectable.map((f) => f.id);
     const allSelected =
       allSelectable.length > 0 && allSelectable.every((f) => selectedFixtureIds.includes(f.id));
@@ -564,59 +1139,83 @@ export default function AdminPanel({
   };
 
   // Paste Fixtures parser & helpers
-  const findBestTeamMatch = (pastedName: string): string => {
-    const cleanWord = (wd: string) => wd.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/s$/, ''); // normalize "u10s" -> "u10"
+  function optimizeFixturesSlots(fixtures: FAFixture[]): FAFixture[] {
+    const groups: Record<string, FAFixture[]> = {};
     
-    const normalized = pastedName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (!normalized) return SCOTTER_TEAMS[0].name;
-
-    // First, let's check for exact word combinations
-    for (const team of SCOTTER_TEAMS) {
-      const tName = team.name.toLowerCase();
-      const tNorm = tName.replace(/[^a-z0-9]/g, '');
-      if (tNorm === normalized) {
-        return team.name;
+    fixtures.forEach(f => {
+      const isHome = f.homeTeam.toLowerCase().includes('scotter');
+      if (isHome) {
+        const key = `${f.date}_${f.pitchId}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(f);
       }
-    }
+    });
 
-    // Overlap matching
-    let bestMatch = '';
-    let highestScore = 0;
-    const pastedWords = pastedName.toLowerCase().split(/\s+/).map(cleanWord).filter(Boolean);
+    const pitchSlots: Record<string, string[]> = {
+      '5v5': ['09:45', '10:45', '11:45'],
+      '7v7': ['09:30', '10:45', '12:00', '13:15'],
+      '9v9': ['09:30', '11:00', '12:30'],
+      '11v11': ['10:00', '12:00', '14:00', '16:00'],
+    };
 
-    for (const team of SCOTTER_TEAMS) {
-      const teamWords = team.name.toLowerCase().split(/\s+/).map(cleanWord).filter(Boolean);
-      let score = 0;
+    const optimizedMap = new Map<string, string>();
 
-      pastedWords.forEach((pw) => {
-        teamWords.forEach((tw) => {
-          if (tw === pw || tw.includes(pw) || pw.includes(tw)) {
-            score += 1;
-            // Heavy weight for matching age groups (like u7, u10)
-            if (pw.match(/^u\d+$/) || pw.match(/^under\d+$/)) {
-              score += 15;
-            }
-            // Suffix formats weights (saints, juniors, colts, girls)
-            if (pw === 'saints' || pw === 'juniors' || pw === 'junior' || pw === 'colts' || pw === 'girls') {
-              score += 5;
-            }
-          }
+    Object.entries(groups).forEach(([key, groupFixtures]) => {
+      const parts = key.split('_');
+      const date = parts[0];
+      const pitchId = parts[1] as PitchSize;
+      const slots = pitchSlots[pitchId] || ['09:30', '10:45', '12:00'];
+      
+      // Filter out slots that clash with existing approved/pending diary bookings on this pitch
+      const isSlotClashingWithBookings = (slotStr: string): boolean => {
+        const startMins = parseTimeToMinutes(slotStr);
+        const endMins = parseTimeToMinutes(getAdminEndTimeForSlot(pitchId, date, slotStr));
+        
+        return bookings.some((b) => {
+          if (b.pitchId !== pitchId || b.date !== date) return false;
+          if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+          
+          const bStart = parseTimeToMinutes(b.timeSlot);
+          const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+          
+          return startMins < bEnd && bStart < endMins;
         });
+      };
+
+      const vacantSlots = slots.filter(s => !isSlotClashingWithBookings(s));
+
+      const sorted = [...groupFixtures].sort((a, b) => {
+        const timeCompare = a.timeSlot.localeCompare(b.timeSlot);
+        if (timeCompare !== 0) return timeCompare;
+        return a.id.localeCompare(b.id);
       });
+      
+      sorted.forEach((f, idx) => {
+        // Assign vacant slots first, then fallback to standard slots to suggest better options
+        let targetSlot = '';
+        if (vacantSlots.length > idx) {
+          targetSlot = vacantSlots[idx];
+        } else {
+          const remainingSlots = slots.filter(s => !vacantSlots.includes(s));
+          if (remainingSlots.length > 0) {
+            targetSlot = remainingSlots[(idx - vacantSlots.length) % remainingSlots.length];
+          } else {
+            targetSlot = slots[idx % slots.length];
+          }
+        }
+        optimizedMap.set(f.id, targetSlot);
+      });
+    });
 
-      if (score > highestScore) {
-        highestScore = score;
-        bestMatch = team.name;
+    return fixtures.map(f => {
+      if (optimizedMap.has(f.id)) {
+        return {
+          ...f,
+          timeSlot: optimizedMap.get(f.id)!,
+        };
       }
-    }
-
-    return bestMatch || SCOTTER_TEAMS[0].name;
-  };
-
-  const isNameMismatch = (fixture: FAFixture) => {
-    const original = fixture.homeTeam.replace(/^Scotter\s+(United\s+)?/i, '').trim().toLowerCase();
-    const mapped = fixture.scotterTeam.replace(/^Scotter\s+(United\s+)?/i, '').trim().toLowerCase();
-    return original !== mapped;
+      return f;
+    });
   };
 
   const handleParsePastedFixtures = () => {
@@ -630,9 +1229,9 @@ export default function AdminPanel({
     const defaultSlotCount: Record<string, number> = {};
 
     const pitchSlots: Record<string, string[]> = {
-      '5v5': ['09:30', '10:45', '12:00', '13:15'],
+      '5v5': ['09:45', '10:45', '11:45'],
       '7v7': ['09:30', '10:45', '12:00', '13:15'],
-      '9v9': ['09:30', '10:45', '12:00', '13:15'],
+      '9v9': ['09:30', '11:00', '12:30'],
       '11v11': ['10:00', '12:00', '14:00', '16:00'],
     };
 
@@ -641,6 +1240,53 @@ export default function AdminPanel({
       // Skip header lines
       if (lower.includes('home team') && lower.includes('away team')) return;
       if (lower.startsWith('date\t') || lower.startsWith('time\t')) return;
+
+      // Check if it's a tab-separated line from Full Time
+      if (line.includes('\t') && lower.includes('vs')) {
+        const tabData = parseFullTimeTabLine(line);
+        if (tabData) {
+          const homeTeam = tabData.homeTeam;
+          const awayTeam = tabData.awayTeam;
+          const date = tabData.date || selectedDate;
+          let timeSlot = tabData.timeSlot;
+          const hasExplicitTime = tabData.hasExplicitTime;
+          const competition = tabData.statusNotes ? `[${tabData.statusNotes}] ${tabData.competition}` : tabData.competition;
+
+          if (homeTeam && homeTeam.toLowerCase() !== 'home' && homeTeam.toLowerCase() !== 'home team') {
+            let scotterTeam = '';
+            if (homeTeam.toLowerCase().includes('scotter')) {
+              scotterTeam = findBestTeamMatch(homeTeam);
+            } else if (awayTeam.toLowerCase().includes('scotter')) {
+              scotterTeam = findBestTeamMatch(awayTeam);
+            } else {
+              scotterTeam = findBestTeamMatch(homeTeam);
+            }
+
+            const teamObj = SCOTTER_TEAMS.find((t) => t.name === scotterTeam);
+            const pitchId = teamObj ? teamObj.pitchSize : '11v11';
+
+            if (!hasExplicitTime) {
+              const slotKey = `${date}_${pitchId}`;
+              const currentCount = defaultSlotCount[slotKey] || 0;
+              const slots = pitchSlots[pitchId] || ['09:30', '10:45', '12:00'];
+              timeSlot = slots[currentCount % slots.length];
+              defaultSlotCount[slotKey] = currentCount + 1;
+            }
+
+            parsed.push({
+              id: `fa-pasted-${Date.now()}-${idx}`,
+              date,
+              timeSlot,
+              pitchId,
+              homeTeam,
+              awayTeam,
+              competition,
+              scotterTeam,
+            });
+          }
+          return; // Skip standard parsing for this line
+        }
+      }
 
       let date = selectedDate;
       let timeSlot = '09:30';
@@ -812,8 +1458,9 @@ export default function AdminPanel({
         }
       }
 
-      homeTeam = homeTeam.replace(/^Scotter\s+(United\s+)?/i, '').trim();
-      awayTeam = awayTeam.replace(/^Scotter\s+(United\s+)?/i, '').trim();
+      // Clean up leading game type codes (like L or Cup) but preserve Scotter United names
+      homeTeam = homeTeam.replace(/^(L|Cup|League|Match)\b\s*/i, '').trim();
+      awayTeam = awayTeam.replace(/^(L|Cup|League|Match)\b\s*/i, '').trim();
 
       if (homeTeam && homeTeam.toLowerCase() !== 'home' && homeTeam.toLowerCase() !== 'home team') {
         const suggestedTeam = findBestTeamMatch(homeTeam);
@@ -844,9 +1491,16 @@ export default function AdminPanel({
     if (parsed.length === 0) {
       setImportFeedback('Error: Could not parse any fixtures from the pasted text. Please verify the format (e.g. tab-separated, vs separators, dates, times).');
     } else {
-      setParsedFixtures(parsed);
-      setSelectedParsedIds(parsed.map((p) => p.id));
-      setImportFeedback(`Successfully parsed ${parsed.length} fixtures! Check the home team name-mappings and tick checkboxes below to bulk import.`);
+      const optimized = optimizeFixturesSlots(parsed);
+      setParsedFixtures(optimized);
+      const homeFixtureIds = optimized.filter((p) => p.homeTeam.toLowerCase().includes('scotter')).map((p) => p.id);
+      setSelectedParsedIds(homeFixtureIds);
+      const awayCount = optimized.length - homeFixtureIds.length;
+      if (awayCount > 0) {
+        setImportFeedback(`Successfully parsed ${optimized.length} fixtures with slot optimization! ${homeFixtureIds.length} home matches are selected. ${awayCount} away matches have been automatically unticked.`);
+      } else {
+        setImportFeedback(`Successfully parsed ${optimized.length} fixtures with slot optimization! Check the home team name-mappings and tick checkboxes below to bulk import.`);
+      }
     }
   };
 
@@ -863,8 +1517,8 @@ export default function AdminPanel({
     const teamObj = SCOTTER_TEAMS.find((t) => t.name === bulkRemapTeam);
     const pitchId = teamObj ? teamObj.pitchSize : '11v11';
 
-    setParsedFixtures((prev) =>
-      prev.map((f) => {
+    setParsedFixtures((prev) => {
+      const updated = prev.map((f) => {
         if (selectedParsedIds.includes(f.id)) {
           return {
             ...f,
@@ -873,8 +1527,9 @@ export default function AdminPanel({
           };
         }
         return f;
-      })
-    );
+      });
+      return optimizeFixturesSlots(updated);
+    });
 
     setImportFeedback(`Successfully bulk remapped ${selectedParsedIds.length} ticked fixture(s) to "${bulkRemapTeam}".`);
   };
@@ -883,8 +1538,8 @@ export default function AdminPanel({
     const teamObj = SCOTTER_TEAMS.find((t) => t.name === teamName);
     const pitchId = teamObj ? teamObj.pitchSize : '11v11';
 
-    setParsedFixtures((prev) =>
-      prev.map((f) => {
+    setParsedFixtures((prev) => {
+      const updated = prev.map((f) => {
         if (f.id === id) {
           return {
             ...f,
@@ -893,8 +1548,66 @@ export default function AdminPanel({
           };
         }
         return f;
-      })
-    );
+      });
+      return optimizeFixturesSlots(updated);
+    });
+  };
+
+  const handleUpdateParsedField = (id: string, field: keyof FAFixture, value: any) => {
+    setParsedFixtures((prev) => {
+      const updated = prev.map((f) => {
+        if (f.id === id) {
+          return {
+            ...f,
+            [field]: value,
+          };
+        }
+        return f;
+      });
+      if (field === 'date' || field === 'pitchId') {
+        return optimizeFixturesSlots(updated);
+      }
+      return updated;
+    });
+  };
+
+  const handleToggleHomeAway = (id: string) => {
+    setParsedFixtures((prev) => {
+      const updated = prev.map((f) => {
+        if (f.id === id) {
+          const updatedHome = f.awayTeam;
+          const updatedAway = f.homeTeam;
+          const isNowHome = updatedHome.toLowerCase().includes('scotter');
+          const suggestedTeam = isNowHome ? findBestTeamMatch(updatedHome) : f.scotterTeam;
+          
+          return {
+            ...f,
+            homeTeam: updatedHome,
+            awayTeam: updatedAway,
+            scotterTeam: suggestedTeam,
+          };
+        }
+        return f;
+      });
+      return optimizeFixturesSlots(updated);
+    });
+
+    // Toggle selection status in selectedParsedIds appropriately
+    setParsedFixtures((current) => {
+      const updatedFixture = current.find(f => f.id === id);
+      if (updatedFixture) {
+        const isHome = updatedFixture.homeTeam.toLowerCase().includes('scotter');
+        setSelectedParsedIds((prev) => {
+          if (isHome) {
+            return prev.includes(id) ? prev : [...prev, id];
+          } else {
+            return prev.filter(x => x !== id);
+          }
+        });
+        setImportFeedback(`Swapped Home/Away teams. Moved match to the ${isHome ? 'Home' : 'Away'} fixtures list.`);
+      }
+      return current;
+    });
   };
 
   const handleImportParsedFixtures = () => {
@@ -904,53 +1617,103 @@ export default function AdminPanel({
       return;
     }
 
-    // Check for clashes
-    const clashDates: string[] = [];
-    const newBookings: Booking[] = [];
+    // Don't schedule a match on a slot if it looks like an away game
+    const homeMatchesToBook = selectedToBook.filter((f) => f.homeTeam.toLowerCase().includes('scotter'));
+    const awayMatchesSkipped = selectedToBook.filter((f) => !f.homeTeam.toLowerCase().includes('scotter'));
 
-    selectedToBook.forEach((f, idx) => {
-      const clash = bookings.find(
+    // Filter out already booked matches under their mapped scotter team to prevent duplicate booking actions
+    const newHomeMatchesToBook = homeMatchesToBook.filter((f) => {
+      const isAlreadyBooked = bookings.some(
         (b) =>
           b.pitchId === f.pitchId &&
           b.date === f.date &&
           b.timeSlot === f.timeSlot &&
-          b.status !== BookingStatus.DECLINED
+          b.status !== BookingStatus.DECLINED &&
+          b.status !== BookingStatus.UNBOOKED &&
+          b.teamName === f.scotterTeam
       );
+      return !isAlreadyBooked;
+    });
 
-      if (clash) {
-        clashDates.push(`${f.date} @ ${f.timeSlot} (${clash.teamName} on ${f.pitchId})`);
-      } else {
-        newBookings.push({
-          id: `b-pasted-import-${Date.now()}-${idx}`,
-          pitchId: f.pitchId,
-          date: f.date,
-          timeSlot: f.timeSlot,
-          teamName: f.scotterTeam,
-          managerName: currentUser.name,
-          managerId: 'fa-auto-import',
-          notes: `[FA Copy & Paste Import] ${f.competition}: ${f.homeTeam} vs ${f.awayTeam}`,
-          status: BookingStatus.APPROVED,
-          createdAt: new Date().toISOString(),
-        });
-      }
+    if (homeMatchesToBook.length > 0 && newHomeMatchesToBook.length === 0) {
+      setImportFeedback('Info: Selected home matches are already successfully booked in the Pitch Diary!');
+      return;
+    }
+
+    // Check for clashes on unbooked home matches only using precise interval overlap detection
+    const clashingSelected = newHomeMatchesToBook.filter((f) => {
+      const fStart = parseTimeToMinutes(f.timeSlot);
+      const fEnd = parseTimeToMinutes(getAdminEndTimeForSlot(f.pitchId, f.date, f.timeSlot));
+
+      return bookings.some((b) => {
+        const pitchMatches = b.pitchId === f.pitchId || 
+          (rules.prevent5v5_11v11Overlap && ((f.pitchId === '5v5' && b.pitchId === '11v11') || (f.pitchId === '11v11' && b.pitchId === '5v5')));
+        if (!pitchMatches || b.date !== f.date) return false;
+        if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+
+        const bStart = parseTimeToMinutes(b.timeSlot);
+        const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+
+        return fStart < bEnd && bStart < fEnd;
+      });
+    });
+
+    if (clashingSelected.length > 0) {
+      const clashList = clashingSelected.map(f => `${f.date} @ ${f.timeSlot} (${f.scotterTeam} / ${f.pitchId})`).join(', ');
+      setImportFeedback(`Error: Unresolved clashes detected in selected fixtures (${clashList}). Please manually assign alternative vacant slots/times before importing.`);
+      return;
+    }
+
+    const newBookings: Booking[] = newHomeMatchesToBook.map((f, idx) => {
+      return {
+        id: `b-pasted-import-${Date.now()}-${idx}`,
+        pitchId: f.pitchId,
+        date: f.date,
+        timeSlot: f.timeSlot,
+        teamName: f.scotterTeam,
+        managerName: currentUser.name,
+        managerId: 'fa-auto-import',
+        notes: `[FA Copy & Paste Import] ${f.competition}: ${f.homeTeam} vs ${f.awayTeam}`,
+        status: BookingStatus.APPROVED,
+        createdAt: new Date().toISOString(),
+      };
     });
 
     if (newBookings.length > 0) {
       onAddBookingsBulk(newBookings);
     }
 
-    if (clashDates.length > 0) {
-      setImportFeedback(
-        `Partial Import: Successfully booked ${newBookings.length} match(es) in the Pitch Diary. Skipped ${clashDates.length} clash(es): ${clashDates.join(', ')}.`
-      );
+    if (awayMatchesSkipped.length > 0) {
+      setImportFeedback(`Successfully imported and booked ${newBookings.length} home match(es) directly into the Pitch Diary! ${awayMatchesSkipped.length} away match(es) were skipped (not scheduled on home slots).`);
     } else {
       setImportFeedback(`Successfully imported and booked ${newBookings.length} match(es) directly into the Pitch Diary!`);
     }
-    
-    // Clear state
-    setParsedFixtures([]);
-    setSelectedParsedIds([]);
-    setPasteText('');
+  };
+
+  const handleUnbookParsedFixtures = () => {
+    const selectedToUnbook = parsedFixtures.filter(
+      (f) => selectedParsedIds.includes(f.id)
+    );
+
+    if (selectedToUnbook.length === 0) {
+      setImportFeedback('Error: No checked fixtures selected to unbook.');
+      return;
+    }
+
+    let count = 0;
+    selectedToUnbook.forEach((f) => {
+      const statusInfo = getFixtureStatus(f);
+      if (statusInfo.type === 'BOOKED_SELF' && statusInfo.booking) {
+        onCancelBooking(statusInfo.booking.id);
+        count++;
+      }
+    });
+
+    if (count > 0) {
+      setImportFeedback(`Successfully unbooked ${count} selected match(es) from the Pitch Diary!`);
+    } else {
+      setImportFeedback('Info: None of the selected checked fixtures were currently booked.');
+    }
   };
 
   const toggleParsedSelection = (id: string) => {
@@ -959,11 +1722,15 @@ export default function AdminPanel({
     );
   };
 
-  const toggleSelectAllParsed = () => {
-    if (selectedParsedIds.length === parsedFixtures.length) {
-      setSelectedParsedIds([]);
+  const toggleSelectAllHome = () => {
+    const homeFixtures = parsedFixtures.filter(f => f.homeTeam.toLowerCase().includes('scotter'));
+    const allHomeSelected = homeFixtures.length > 0 && homeFixtures.every(f => selectedParsedIds.includes(f.id));
+    if (allHomeSelected) {
+      const homeIds = homeFixtures.map(f => f.id);
+      setSelectedParsedIds(prev => prev.filter(id => !homeIds.includes(id)));
     } else {
-      setSelectedParsedIds(parsedFixtures.map((p) => p.id));
+      const homeIds = homeFixtures.map(f => f.id);
+      setSelectedParsedIds(prev => Array.from(new Set([...prev, ...homeIds])));
     }
   };
 
@@ -992,7 +1759,7 @@ export default function AdminPanel({
 
         {/* Sub-tabs */}
         {currentUser.role === 'ADMIN' && (
-          <div className="flex space-x-1 bg-blue-950/80 p-1 rounded-xl border border-blue-800/40">
+          <div className="flex flex-wrap gap-1 bg-blue-950/80 p-1 rounded-xl border border-blue-800/40">
             <button
               onClick={() => setActiveSubTab('FULLTIME')}
               className={`flex items-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${
@@ -1015,12 +1782,108 @@ export default function AdminPanel({
               <CalendarRange className="w-3.5 h-3.5" />
               <span>Block Book Tool</span>
             </button>
+            <button
+              onClick={() => setActiveSubTab('RULES')}
+              className={`flex items-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${
+                activeSubTab === 'RULES'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>Rules & Block Times</span>
+            </button>
+            <button
+              onClick={() => setActiveSubTab('BLOCK_OUT')}
+              className={`flex items-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${
+                activeSubTab === 'BLOCK_OUT'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Pitch Block-Outs</span>
+            </button>
           </div>
         )}
       </div>
 
       {/* Panel Inner Content */}
       <div className="p-6">
+        {overlappingIssues.length > 0 && (
+          <div className="bg-red-950/40 border border-red-500/30 rounded-xl p-4 mb-6 space-y-3">
+            <div className="flex items-center justify-between border-b border-red-500/20 pb-2">
+              <div className="flex items-center space-x-2 text-red-400">
+                <ShieldAlert className="w-5 h-5 text-red-500" />
+                <span className="text-xs font-black uppercase tracking-wider">
+                  Pitch Allocation Conflict Center ({overlappingIssues.length})
+                </span>
+              </div>
+              <span className="bg-red-500 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full animate-pulse">
+                CONFLICTS DETECTED
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300">
+              The following fixtures are booked on the same pitch size and date. Since we ignore kick-off times, these slots are flagged as overlapping:
+            </p>
+            <div className="space-y-2.5 max-h-[250px] overflow-y-auto pr-1">
+              {overlappingIssues.map((issue) => (
+                <div key={issue.id} className="bg-slate-950/60 rounded-lg p-3 border border-red-500/15 flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-xs">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-slate-200 font-bold">
+                      <span className="inline-block w-2 h-2 rounded-full bg-red-500"></span>
+                      <span className="text-red-400 font-black uppercase tracking-wide">Date:</span>
+                      <span>{new Date(issue.date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                      <span className="text-slate-500">|</span>
+                      <span className="bg-blue-900/40 text-blue-300 border border-blue-500/20 text-[9px] px-1.5 py-0.5 rounded uppercase font-black tracking-wide">{issue.pitchId} Pitch</span>
+                    </div>
+                    
+                    <div className="mt-2 space-y-2 pl-3 border-l-2 border-red-500/20">
+                      {issue.bookings.map((b) => {
+                        const { homeTeam, awayTeam } = getHomeAndAwayForBooking(b);
+                        return (
+                          <div key={b.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-900/40 pb-1.5 last:border-0 last:pb-0">
+                            <div className="flex items-center gap-1.5 text-slate-300">
+                              <span className="inline-block w-1 h-1 bg-red-400 rounded-full"></span>
+                              <span className="font-semibold text-white">{homeTeam}</span>
+                              <span className="text-slate-400">vs</span>
+                              <span className="font-semibold text-white">{awayTeam}</span>
+                              <span className="text-slate-500 font-bold">({b.timeSlot})</span>
+                              <span className="text-slate-400 text-[11px] font-normal">- booked by {b.teamName}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 self-start sm:self-center pl-2.5 sm:pl-0">
+                              <button
+                                onClick={() => onRequestBooking(b.pitchId, b.timeSlot, b.notes, b.date, b.id)}
+                                className="bg-blue-600/25 hover:bg-blue-600 hover:text-white text-blue-300 border border-blue-500/30 text-[9px] font-black px-2 py-0.5 rounded transition-all cursor-pointer flex items-center gap-1"
+                                title="Reschedule or edit this slot allocation"
+                              >
+                                <Clock className="w-3 h-3" />
+                                <span>Reschedule</span>
+                              </button>
+                              <button
+                                onClick={() => onCancelBooking(b.id)}
+                                className="bg-red-600/25 hover:bg-red-600 hover:text-white text-red-300 border border-red-500/30 text-[9px] font-black px-2 py-0.5 rounded transition-all cursor-pointer flex items-center gap-1"
+                                title="Unbook this fixture immediately to resolve conflict"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Unbook</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  
+                  <div className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-1 rounded font-medium flex-shrink-0 self-start md:self-center">
+                    Double pitch allocation issue
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <AnimatePresence mode="wait">
           {activeSubTab === 'BLOCK' && (
             <motion.div
@@ -1330,6 +2193,520 @@ export default function AdminPanel({
             </motion.div>
           )}
 
+          {activeSubTab === 'RULES' && (
+            <motion.div
+              key="rules"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.15 }}
+              className="space-y-6 text-left text-slate-300 animate-fade-in"
+            >
+              {/* Rules Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                {/* Module 1: System Logic Rules (Toggles) */}
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
+                    <Shield className="w-5 h-5 text-blue-400" />
+                    <div>
+                      <h4 className="text-sm font-extrabold text-white uppercase tracking-wider">System Constraints & Policies</h4>
+                      <p className="text-[10px] text-slate-400">Enable or disable strict scheduling checks across the system</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Toggle 1: 5v5 vs 11v11 Overlap Rule */}
+                    <div className="flex items-start justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-900">
+                      <div className="space-y-1">
+                        <span className="block text-xs font-bold text-white uppercase tracking-wide">
+                          5v5 & 11v11 Overlap Prevention
+                        </span>
+                        <span className="block text-[11px] text-slate-400">
+                          Prevent concurrent games on the 5v5 and 11v11 pitches (due to 5v5 being inside/on the 11v11 pitch).
+                        </span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={rules.prevent5v5_11v11Overlap}
+                        onChange={(e) => setRules(prev => ({ ...prev, prevent5v5_11v11Overlap: e.target.checked }))}
+                        className="w-5 h-5 rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-900 mt-1 cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Toggle 3: Max Home Games */}
+                    <div className="flex items-start justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-900">
+                      <div className="space-y-1">
+                        <span className="block text-xs font-bold text-white uppercase tracking-wide">
+                          Weekly Home Match Limit Warning
+                        </span>
+                        <span className="block text-[11px] text-slate-400">
+                          Flag a warning if any team is scheduled for more than 2 home games within the same calendar week.
+                        </span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={rules.maxHomeGamesPerWeek}
+                        onChange={(e) => setRules(prev => ({ ...prev, maxHomeGamesPerWeek: e.target.checked }))}
+                        className="w-5 h-5 rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-900 mt-1 cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Toggle 4: Fair Fixture Distribution Policy */}
+                    <div className="flex items-start justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-900">
+                      <div className="space-y-1">
+                        <span className="block text-xs font-bold text-white uppercase tracking-wide">
+                          Fair Fixture Distribution Policy
+                        </span>
+                        <span className="block text-[11px] text-slate-400">
+                          When mass scheduling, distribute kick-off slots fairly so the same team doesn't always get the early kick-off and slots are spread as evenly as possible.
+                        </span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={rules.fairDistributionOfKickoffs}
+                        onChange={(e) => setRules(prev => ({ ...prev, fairDistributionOfKickoffs: e.target.checked }))}
+                        className="w-5 h-5 rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-900 mt-1 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Module 2: AI Constraints & Policies Assistant */}
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
+                    <Sparkles className="w-5 h-5 text-purple-400" />
+                    <div>
+                      <h4 className="text-sm font-extrabold text-white uppercase tracking-wider">AI Policy & Constraints Assistant</h4>
+                      <p className="text-[10px] text-slate-400">Use AI to automatically adjust system rules, scheduling behaviors, and policy values using natural language instructions.</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <textarea
+                      value={aiPolicyPrompt}
+                      onChange={(e) => setAiPolicyPrompt(e.target.value)}
+                      placeholder="e.g. 'Disable buffer times and make sure early kickoffs are fairly spread' or 'Deactivate 5v5 overlap checks and enable home limit warnings'"
+                      className="w-full h-20 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-medium placeholder-slate-500 resize-none"
+                    />
+
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-[9px] font-semibold text-slate-500 italic">Powered by Gemini AI Policy Engine</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleApplyAiPolicy(aiPolicyPrompt);
+                        }}
+                        className="bg-purple-600 hover:bg-purple-500 text-white font-extrabold px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 whitespace-nowrap shadow-sm hover:shadow"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-purple-200" />
+                        <span>Apply Policy with AI</span>
+                      </button>
+                    </div>
+
+                    {aiPolicyStatus && (
+                      <div className={`p-3.5 rounded-xl border text-xs space-y-1.5 animate-fade-in ${
+                        aiPolicyStatus.success 
+                          ? 'bg-purple-950/40 border-purple-800/40 text-purple-200' 
+                          : 'bg-red-950/40 border-red-800/40 text-red-200'
+                      }`}>
+                        <p className="font-extrabold flex items-center gap-1.5 uppercase text-[10px] tracking-wider">
+                          {aiPolicyStatus.success ? (
+                            <>
+                              <CheckCircle className="w-4 h-4 text-purple-400" />
+                              Policy Instructions Applied
+                            </>
+                          ) : (
+                            <>
+                              <AlertTriangle className="w-4 h-4 text-red-400" />
+                              Policy Matching Error
+                            </>
+                          )}
+                        </p>
+                        <p className="text-[11px] text-slate-400 leading-relaxed font-medium">{aiPolicyStatus.message}</p>
+                        {aiPolicyStatus.changes.length > 0 && (
+                          <div className="pt-1.5 border-t border-purple-900/30 space-y-1">
+                            <p className="text-[9px] font-extrabold uppercase text-purple-400">Changed Constraints:</p>
+                            {aiPolicyStatus.changes.map((log, idx) => (
+                              <div key={idx} className="font-mono text-[10px] text-slate-300 flex items-center gap-1.5">
+                                <span className="text-purple-400">•</span>
+                                {log}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Module 3: Block Times & Bookings Manager (Amend Block Times) */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3 flex-wrap gap-2">
+                  <div className="flex items-center space-x-2">
+                    <CalendarRange className="w-5 h-5 text-blue-400" />
+                    <div>
+                      <h4 className="text-sm font-extrabold text-white uppercase tracking-wider">Amend Block Times & Bookings</h4>
+                      <p className="text-[10px] text-slate-400">Directly modify, reschedule, or cancel block/recurrent bookings</p>
+                    </div>
+                  </div>
+                  <span className="bg-blue-900/50 text-blue-300 text-[10px] px-2.5 py-1 rounded-full font-bold border border-blue-800/30">
+                    {bookings.filter(b => b.notes.includes('[BLOCK BOOKING]') || b.notes.includes('[FA Copy & Paste Import]') || b.notes.includes('BLOCK')).length} Active Blocks
+                  </span>
+                </div>
+
+                {/* Block Bookings Table */}
+                <div className="overflow-x-auto rounded-xl border border-slate-950">
+                  <table className="w-full text-left border-collapse bg-slate-950/40">
+                    <thead>
+                      <tr className="bg-slate-950 border-b border-slate-800 text-[10px] uppercase font-black tracking-wider text-slate-400">
+                        <th className="py-2.5 px-3">Date</th>
+                        <th className="py-2.5 px-3">Pitch Size</th>
+                        <th className="py-2.5 px-3">Time Slot</th>
+                        <th className="py-2.5 px-3">Team</th>
+                        <th className="py-2.5 px-3">Fixture Notes / Label</th>
+                        <th className="py-2.5 px-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-900 text-xs text-slate-300">
+                      {bookings
+                        .filter(b => b.notes.includes('[BLOCK BOOKING]') || b.notes.includes('[FA Copy & Paste Import]') || b.notes.includes('BLOCK'))
+                        .sort((a, b) => a.date.localeCompare(b.date) || a.timeSlot.localeCompare(b.timeSlot))
+                        .map((b) => {
+                          const isEditing = editingBookingId === b.id;
+                          return (
+                            <tr key={b.id} className="hover:bg-slate-900/40">
+                              {/* Date Column */}
+                              <td className="py-3 px-3 font-semibold whitespace-nowrap">
+                                {isEditing ? (
+                                  <input
+                                    type="date"
+                                    value={editDate}
+                                    onChange={(e) => setEditDate(e.target.value)}
+                                    className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-bold w-32 focus:border-blue-500 focus:outline-none"
+                                  />
+                                ) : (
+                                  new Date(b.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                                )}
+                              </td>
+
+                              {/* Pitch size */}
+                              <td className="py-3 px-3">
+                                {isEditing ? (
+                                  <select
+                                    value={editPitch}
+                                    onChange={(e) => setEditPitch(e.target.value as PitchSize)}
+                                    className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-bold focus:border-blue-500 focus:outline-none"
+                                  >
+                                    <option value="5v5">5v5</option>
+                                    <option value="7v7">7v7</option>
+                                    <option value="9v9">9v9</option>
+                                    <option value="11v11">11v11</option>
+                                  </select>
+                                ) : (
+                                  <span className="bg-slate-900 text-slate-300 border border-slate-800 text-[10px] px-1.5 py-0.5 rounded font-black">
+                                    {b.pitchId}
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Time Slot Column */}
+                              <td className="py-3 px-3 whitespace-nowrap">
+                                {isEditing ? (
+                                  <select
+                                    value={editSlot}
+                                    onChange={(e) => setEditSlot(e.target.value)}
+                                    className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-bold focus:border-blue-500 focus:outline-none"
+                                  >
+                                    {ALL_COMMON_SLOTS.map(s => (
+                                      <option key={s} value={s}>{s}</option>
+                                    ))}
+                                    {!ALL_COMMON_SLOTS.includes(editSlot) && (
+                                      <option value={editSlot}>{editSlot}</option>
+                                    )}
+                                  </select>
+                                ) : (
+                                  <span className="font-extrabold text-blue-400">{b.timeSlot}</span>
+                                )}
+                              </td>
+
+                              {/* Team Name */}
+                              <td className="py-3 px-3 font-semibold text-slate-100 whitespace-nowrap">
+                                {b.teamName}
+                              </td>
+
+                              {/* Label/Notes */}
+                              <td className="py-3 px-3 max-w-xs truncate text-slate-400" title={b.notes}>
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    value={editNotes}
+                                    onChange={(e) => setEditNotes(e.target.value)}
+                                    className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white w-full focus:border-blue-500 focus:outline-none"
+                                  />
+                                ) : (
+                                  b.notes.replace('[BLOCK BOOKING]', '').trim()
+                                )}
+                              </td>
+
+                              {/* Actions */}
+                              <td className="py-3 px-3 text-right whitespace-nowrap">
+                                {isEditing ? (
+                                  <div className="flex items-center justify-end space-x-1.5">
+                                    <button
+                                      onClick={() => {
+                                        // Save edit
+                                        if (onUpdateBooking) {
+                                          // Perform brief clash validation on same/overlapping pitches (excluding ourselves)
+                                          const isClashing = bookings.some(other => {
+                                            if (other.id === b.id || other.date !== editDate) return false;
+                                            if (other.status === BookingStatus.DECLINED || other.status === BookingStatus.UNBOOKED) return false;
+
+                                            const pitchMatches = other.pitchId === editPitch ||
+                                              (rules.prevent5v5_11v11Overlap && ((editPitch === '5v5' && other.pitchId === '11v11') || (editPitch === '11v11' && other.pitchId === '5v5')));
+                                            if (!pitchMatches) return false;
+
+                                            const otherStart = parseTimeToMinutes(other.timeSlot);
+                                            const otherEnd = parseTimeToMinutes(other.endTime || getAdminEndTimeForSlot(other.pitchId, other.date, other.timeSlot));
+                                            
+                                            const editStart = parseTimeToMinutes(editSlot);
+                                            const editEnd = parseTimeToMinutes(getAdminEndTimeForSlot(editPitch, editDate, editSlot));
+
+                                            return editStart < otherEnd && otherStart < editEnd;
+                                          });
+
+                                          if (isClashing) {
+                                            alert("Error: The requested slot/time overlaps with another active booking. Please choose a vacant time.");
+                                            return;
+                                          }
+
+                                          onUpdateBooking(b.id, {
+                                            date: editDate,
+                                            pitchId: editPitch,
+                                            timeSlot: editSlot,
+                                            notes: editNotes
+                                          });
+                                          setEditingBookingId(null);
+                                        }
+                                      }}
+                                      className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold px-2 py-1 rounded cursor-pointer"
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      onClick={() => setEditingBookingId(null)}
+                                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold px-2 py-1 rounded cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-end space-x-1.5">
+                                    <button
+                                      onClick={() => {
+                                        setEditingBookingId(b.id);
+                                        setEditDate(b.date);
+                                        setEditPitch(b.pitchId);
+                                        setEditSlot(b.timeSlot);
+                                        setEditNotes(b.notes);
+                                      }}
+                                      className="bg-blue-600/20 hover:bg-blue-600 hover:text-white text-blue-300 border border-blue-500/30 text-[10px] font-bold px-2 py-1 rounded transition-colors cursor-pointer"
+                                    >
+                                      Amend
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (confirm("Are you sure you want to cancel and unbook this block booking?")) {
+                                          onCancelBooking(b.id);
+                                        }
+                                      }}
+                                      className="bg-red-600/20 hover:bg-red-600 hover:text-white text-red-300 border border-red-500/30 text-[10px] font-bold px-2 py-1 rounded transition-colors cursor-pointer"
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeSubTab === 'BLOCK_OUT' && (
+            <motion.div
+              key="block_out"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.15 }}
+              className="space-y-6"
+            >
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-sm space-y-6">
+                <div>
+                  <h3 className="text-base font-black text-white flex items-center gap-2">
+                    <Lock className="w-5 h-5 text-red-500" />
+                    <span>ADMIN PITCH LOCKOUTS & MAINTENANCE</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Select a date range to immediately block out and lock down pitch availability. This is useful for holiday periods, seasonal turf maintenance, or scheduled facilities closures. Any locked-out slots will be clearly marked as blocked and unavailable.
+                  </p>
+                </div>
+
+                <form onSubmit={handleCreateBlockOutRange} className="space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    {/* Start Date */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                        Start Date
+                      </label>
+                      <input
+                        type="date"
+                        value={blockOutStartDate}
+                        onChange={(e) => setBlockOutStartDate(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl py-2.5 px-3.5 text-xs text-white font-semibold focus:outline-none focus:border-blue-500"
+                        required
+                      />
+                    </div>
+
+                    {/* End Date */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                        End Date
+                      </label>
+                      <input
+                        type="date"
+                        value={blockOutEndDate}
+                        onChange={(e) => setBlockOutEndDate(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl py-2.5 px-3.5 text-xs text-white font-semibold focus:outline-none focus:border-blue-500"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    {/* Pitch Format to Lock */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                        Pitch Format to Lock
+                      </label>
+                      <select
+                        value={blockOutPitchId}
+                        onChange={(e) => setBlockOutPitchId(e.target.value as PitchSize | 'ALL')}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl py-2.5 px-3.5 text-xs text-white font-semibold focus:outline-none focus:border-blue-500"
+                        required
+                      >
+                        <option value="ALL">All Pitches & Formats</option>
+                        <option value="11v11">11v11 Pitch Only</option>
+                        <option value="9v9">9v9 Pitch Only</option>
+                        <option value="7v7">7v7 Pitch Only</option>
+                        <option value="5v5">5v5 Pitch Only</option>
+                      </select>
+                    </div>
+
+                    {/* Lockout Reason */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                        Reason for Lockout
+                      </label>
+                      <input
+                        type="text"
+                        value={blockOutReason}
+                        onChange={(e) => setBlockOutReason(e.target.value)}
+                        placeholder="e.g. Annual Pitch Maintenance, Christmas Holidays"
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl py-2.5 px-3.5 text-xs text-white font-semibold focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  {/* Message displays */}
+                  {blockOutError && (
+                    <div className="p-3 bg-red-950/40 border border-red-800/40 text-red-200 rounded-xl text-xs font-medium">
+                      ⚠️ {blockOutError}
+                    </div>
+                  )}
+
+                  {blockOutSuccess && (
+                    <div className="p-3 bg-emerald-950/40 border border-emerald-800/40 text-emerald-200 rounded-xl text-xs font-medium">
+                      ✅ {blockOutSuccess}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="submit"
+                      className="bg-red-600 hover:bg-red-500 text-white font-black px-6 py-2.5 rounded-xl text-xs flex items-center space-x-2 shadow-md hover:shadow-lg transition-all"
+                    >
+                      <Lock className="w-4 h-4" />
+                      <span>Confirm Pitch Lockout</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* List of active Block-Outs */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
+                <div>
+                  <h4 className="text-sm font-extrabold text-white uppercase tracking-wider">Active System Block-Outs</h4>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Manage and remove existing system lockouts below.</p>
+                </div>
+
+                <div className="overflow-x-auto border border-slate-800 rounded-xl">
+                  <table className="min-w-full divide-y divide-slate-800 bg-slate-950/50 text-left text-xs">
+                    <thead className="bg-slate-900 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+                      <tr>
+                        <th className="px-4 py-3">Date</th>
+                        <th className="px-4 py-3">Pitch</th>
+                        <th className="px-4 py-3">Time Slot</th>
+                        <th className="px-4 py-3">Reason / Details</th>
+                        <th className="px-4 py-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-900 text-slate-300 font-medium">
+                      {bookings.filter(b => b.teamName === 'PITCH BLOCKED').length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-8 text-center text-slate-500 italic">No active system block-outs found.</td>
+                        </tr>
+                      ) : (
+                        bookings
+                          .filter(b => b.teamName === 'PITCH BLOCKED')
+                          .sort((a, b) => a.date.localeCompare(b.date) || a.timeSlot.localeCompare(b.timeSlot))
+                          .map((b) => (
+                            <tr key={b.id} className="hover:bg-slate-900/30">
+                              <td className="px-4 py-3 whitespace-nowrap font-semibold text-white">
+                                {new Date(b.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <span className="bg-slate-800/80 text-slate-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
+                                  {b.pitchId}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-slate-400 font-mono">{b.timeSlot}</td>
+                              <td className="px-4 py-3 text-slate-300">{b.notes.replace('[BLOCK-OUT] ', '')}</td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                <button
+                                  onClick={() => onCancelBooking(b.id)}
+                                  className="text-red-400 hover:text-red-300 text-xs font-bold"
+                                >
+                                  Release Lock
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           {activeSubTab === 'FULLTIME' && (
             <motion.div
               key="fulltime"
@@ -1419,149 +2796,417 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                   )}
 
                   {/* Parsed List Table and Remapper */}
-                  {parsedFixtures.length > 0 && (
-                    <div className="bg-slate-950/60 border border-slate-800 rounded-xl overflow-hidden space-y-4 p-5">
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800 pb-4">
-                        <div>
-                          <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">
-                            Interactive Team Mapper & Import List
-                          </h4>
-                          <p className="text-[10px] text-slate-400">
-                            Verify mapped Scotter teams. Mismatches are flagged for easy correction before importing.
-                          </p>
-                        </div>
+                  {parsedFixtures.length > 0 && (() => {
+                    const homeParsedFixtures = parsedFixtures.filter(f => f.homeTeam.toLowerCase().includes('scotter'));
+                    const awayParsedFixtures = parsedFixtures.filter(f => !f.homeTeam.toLowerCase().includes('scotter'));
+                    
+                    const getPitchWeight = (pitch: string) => {
+                      if (pitch === '5v5') return 5;
+                      if (pitch === '7v7') return 7;
+                      if (pitch === '9v9') return 9;
+                      if (pitch === '11v11') return 11;
+                      return 0;
+                    };
 
-                        {/* Bulk Remap Control */}
-                        <div className="flex items-center space-x-2 bg-slate-900 border border-slate-700 p-1.5 rounded-lg">
-                          <select
-                            value={bulkRemapTeam}
-                            onChange={(e) => setBulkRemapTeam(e.target.value)}
-                            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none"
-                          >
-                            <option value="">-- Bulk Map Selected To --</option>
-                            {SCOTTER_TEAMS.map((t) => (
-                              <option key={t.name} value={t.name}>
-                                {t.name} ({t.pitchSize})
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            onClick={handleBulkRemap}
-                            className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-1 px-3 rounded text-xs transition-colors"
-                          >
-                            Apply
-                          </button>
-                        </div>
-                      </div>
+                    const sortFixturesList = (list: FAFixture[]) => {
+                      if (!parsedSortField) return list;
+                      return [...list].sort((a, b) => {
+                        let comparison = 0;
+                        if (parsedSortField === 'pitch') {
+                          comparison = getPitchWeight(a.pitchId) - getPitchWeight(b.pitchId);
+                        } else if (parsedSortField === 'date') {
+                          comparison = a.date.localeCompare(b.date);
+                        } else if (parsedSortField === 'time') {
+                          comparison = a.timeSlot.localeCompare(b.timeSlot);
+                        } else if (parsedSortField === 'homeTeam') {
+                          comparison = a.homeTeam.localeCompare(b.homeTeam);
+                        } else if (parsedSortField === 'scotterTeam') {
+                          comparison = a.scotterTeam.localeCompare(b.scotterTeam);
+                        } else if (parsedSortField === 'awayTeam') {
+                          comparison = a.awayTeam.localeCompare(b.awayTeam);
+                        }
+                        return parsedSortAsc ? comparison : -comparison;
+                      });
+                    };
 
-                      {/* Fixtures Table */}
-                      <div className="overflow-x-auto rounded-lg border border-slate-800">
-                        <table className="w-full text-left border-collapse">
-                          <thead>
-                            <tr className="bg-slate-900 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-800">
-                              <th className="py-2.5 px-3 w-10 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedParsedIds.length === parsedFixtures.length && parsedFixtures.length > 0}
-                                  onChange={toggleSelectAllParsed}
-                                  className="rounded text-blue-600 focus:ring-0 bg-slate-950 border-slate-700 cursor-pointer w-4 h-4"
-                                />
-                              </th>
-                              <th className="py-2.5 px-3">Date & Time</th>
-                              <th className="py-2.5 px-3">Pasted Home Team</th>
-                              <th className="py-2.5 px-3">Mapped Scotter Team (Suggestion)</th>
-                              <th className="py-2.5 px-3">Away Team</th>
-                              <th className="py-2.5 px-3 text-center">Pitch Format</th>
-                              <th className="py-2.5 px-3 text-center">Clash Status</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-900 text-xs text-slate-300">
-                            {parsedFixtures.map((f) => {
-                              const mismatch = isNameMismatch(f);
-                              const clash = bookings.find(
-                                (b) =>
-                                  b.pitchId === f.pitchId &&
-                                  b.date === f.date &&
-                                  b.timeSlot === f.timeSlot &&
-                                  b.status !== BookingStatus.DECLINED
-                              );
+                    const sortedHomeFixtures = sortFixturesList(homeParsedFixtures);
+                    const sortedAwayFixtures = sortFixturesList(awayParsedFixtures);
 
-                              return (
-                                <tr key={f.id} className={`hover:bg-slate-900/60 ${mismatch ? 'bg-amber-950/10' : ''}`}>
-                                  <td className="py-3 px-3 text-center">
-                                    <input
-                                      type="checkbox"
-                                      checked={selectedParsedIds.includes(f.id)}
-                                      onChange={() => toggleParsedSelection(f.id)}
-                                      className="rounded text-blue-600 focus:ring-0 bg-slate-950 border-slate-700 cursor-pointer w-4 h-4"
-                                    />
-                                  </td>
-                                  <td className="py-3 px-3 font-medium whitespace-nowrap">
-                                    <div className="text-white">{f.date}</div>
-                                    <div className="text-[10px] text-slate-400 font-bold">{f.timeSlot}</div>
-                                  </td>
-                                  <td className="py-3 px-3 font-semibold text-slate-200">
-                                    {f.homeTeam}
-                                  </td>
-                                  <td className="py-3 px-3">
-                                    <div className="flex flex-col gap-1">
-                                      <select
-                                        value={f.scotterTeam}
-                                        onChange={(e) => handleIndividualRemap(f.id, e.target.value)}
-                                        className={`bg-slate-900 border text-xs font-bold rounded-lg p-1.5 w-full text-white ${
-                                          mismatch ? 'border-amber-500 focus:border-amber-400' : 'border-slate-700 focus:border-blue-500'
-                                        }`}
-                                      >
-                                        {SCOTTER_TEAMS.map((t) => (
-                                          <option key={t.name} value={t.name}>
-                                            {t.name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      {mismatch && (
-                                        <span className="text-[9px] text-amber-400 font-black flex items-center gap-1">
-                                          ⚠️ Mismatched Name Suggested
-                                        </span>
-                                      )}
-                                    </div>
-                                  </td>
-                                  <td className="py-3 px-3 text-slate-400 font-medium">
-                                    {f.awayTeam}
-                                  </td>
-                                  <td className="py-3 px-3 text-center whitespace-nowrap">
-                                    <span className="bg-slate-800 text-slate-300 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-slate-700">
-                                      {f.pitchId}
-                                    </span>
-                                  </td>
-                                  <td className="py-3 px-3 text-center">
-                                    {clash ? (
-                                      <span className="bg-red-950/80 text-red-400 border border-red-800 text-[9px] font-black uppercase px-2 py-0.5 rounded-md">
-                                        ❌ Clash: {clash.teamName}
-                                      </span>
-                                    ) : (
-                                      <span className="bg-emerald-950/80 text-emerald-400 border border-emerald-800 text-[9px] font-black uppercase px-2 py-0.5 rounded-md">
-                                        ✅ Vacant
-                                      </span>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                    const selectedToBook = parsedFixtures.filter((f) => selectedParsedIds.includes(f.id));
 
-                      <div className="flex justify-end pt-2">
-                        <button
-                          onClick={handleImportParsedFixtures}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold py-2.5 px-6 rounded-xl flex items-center space-x-2 shadow-md transition-all uppercase tracking-wider"
+                    const handleSort = (field: 'pitch' | 'date' | 'time' | 'homeTeam' | 'scotterTeam' | 'awayTeam') => {
+                      if (parsedSortField === field) {
+                        setParsedSortAsc(!parsedSortAsc);
+                      } else {
+                        setParsedSortField(field);
+                        setParsedSortAsc(true);
+                      }
+                    };
+
+                    const renderSortHeader = (label: string, field: 'pitch' | 'date' | 'time' | 'homeTeam' | 'scotterTeam' | 'awayTeam', alignClass: string = '') => {
+                      const isActive = parsedSortField === field;
+                      return (
+                        <th 
+                          onClick={() => handleSort(field)}
+                          className={`py-2.5 px-3 cursor-pointer select-none hover:bg-slate-800 hover:text-white transition-colors group ${alignClass}`}
                         >
-                          <CheckCircle className="w-4 h-4" />
-                          <span>Import and Book {selectedParsedIds.length} Selected</span>
-                        </button>
+                          <div className={`flex items-center gap-1 ${alignClass.includes('center') ? 'justify-center' : ''}`}>
+                            <span>{label}</span>
+                            {isActive ? (
+                              parsedSortAsc ? (
+                                <ArrowUp className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                              ) : (
+                                <ArrowDown className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                              )
+                            ) : (
+                              <ArrowUpDown className="w-3 h-3 text-slate-500 group-hover:text-slate-300 opacity-60 flex-shrink-0" />
+                            )}
+                          </div>
+                        </th>
+                      );
+                    };
+
+                    return (
+                      <div className="bg-slate-950/60 border border-slate-800 rounded-xl overflow-hidden space-y-6 p-5">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800 pb-4">
+                          <div>
+                            <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">
+                              Interactive Team Mapper & Import List
+                            </h4>
+                            <p className="text-[10px] text-slate-400">
+                              Verify details, assign pitches/slots manually, or map Scotter teams. Mismatches are flagged for easy correction before importing.
+                            </p>
+                          </div>
+
+                          {/* Bulk Remap Control */}
+                          <div className="flex items-center space-x-2 bg-slate-900 border border-slate-700 p-1.5 rounded-lg">
+                            <select
+                                value={bulkRemapTeam}
+                                onChange={(e) => setBulkRemapTeam(e.target.value)}
+                                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none"
+                            >
+                              <option value="">-- Bulk Map Selected To --</option>
+                              {SCOTTER_TEAMS.map((t) => (
+                                <option key={t.name} value={t.name}>
+                                  {t.name} ({t.pitchSize})
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={handleBulkRemap}
+                              className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-1 px-3 rounded text-xs transition-colors"
+                            >
+                              Apply
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Home Fixtures Section */}
+                        <div className="space-y-3">
+                          <h5 className="text-xs font-extrabold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                            🏠 Home Fixtures to Book ({homeParsedFixtures.length})
+                          </h5>
+
+                          {homeParsedFixtures.length === 0 ? (
+                            <div className="text-center py-6 text-slate-400 bg-slate-900/40 rounded-lg border border-slate-800 text-xs font-medium">
+                              No parsed home fixtures found in paste buffer.
+                            </div>
+                          ) : (
+                            <div className="overflow-x-auto rounded-lg border border-slate-800">
+                              <table className="w-full text-left border-collapse">
+                                <thead>
+                                  <tr className="bg-slate-900 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                                    <th className="py-2.5 px-3 w-10 text-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={homeParsedFixtures.length > 0 && homeParsedFixtures.every(f => selectedParsedIds.includes(f.id))}
+                                        onChange={toggleSelectAllHome}
+                                        className="rounded text-blue-600 focus:ring-0 bg-slate-950 border-slate-700 cursor-pointer w-4 h-4"
+                                      />
+                                    </th>
+                                    {renderSortHeader('Date', 'date')}
+                                    {renderSortHeader('Kick-Off Time', 'time')}
+                                    {renderSortHeader('Pasted Home Team', 'homeTeam')}
+                                    {renderSortHeader('Mapped Scotter Team (Suggestion)', 'scotterTeam')}
+                                    {renderSortHeader('Away Team', 'awayTeam')}
+                                    {renderSortHeader('Pitch Format', 'pitch', 'text-center')}
+                                    <th className="py-2.5 px-3 text-center">Clash Status</th>
+                                    <th className="py-2.5 px-3 text-center w-12">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-900 text-xs text-slate-300">
+                                  {sortedHomeFixtures.map((f) => {
+                                    const mismatch = isNameMismatch(f);
+                                    const statusInfo = getFixtureStatus(f);
+                                    const isAlreadyBooked = statusInfo.type === 'BOOKED_SELF';
+                                    const isRealClash = statusInfo.type === 'CLASH';
+                                    const matchBooking = statusInfo.booking;
+
+                                    return (
+                                      <tr key={f.id} className={`hover:bg-slate-900/60 ${mismatch ? 'bg-amber-950/10' : ''}`}>
+                                        <td className="py-3 px-3 text-center">
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedParsedIds.includes(f.id)}
+                                            onChange={() => toggleParsedSelection(f.id)}
+                                            className="rounded text-blue-600 focus:ring-0 bg-slate-950 border-slate-700 cursor-pointer w-4 h-4"
+                                          />
+                                        </td>
+                                        {/* Date cell - Editable */}
+                                        <td className="py-3 px-3 whitespace-nowrap">
+                                          <input
+                                            type="text"
+                                            value={f.date}
+                                            onChange={(e) => handleUpdateParsedField(f.id, 'date', e.target.value)}
+                                            className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-bold w-24 text-center focus:border-blue-500 focus:outline-none"
+                                            placeholder="D/M/YY"
+                                          />
+                                        </td>
+                                        {/* TimeSlot cell - Editable */}
+                                        <td className="py-3 px-3 whitespace-nowrap">
+                                          <select
+                                            value={f.timeSlot}
+                                            onChange={(e) => handleUpdateParsedField(f.id, 'timeSlot', e.target.value)}
+                                            className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 font-semibold focus:outline-none focus:border-blue-500 text-center w-20"
+                                          >
+                                            {ALL_COMMON_SLOTS.map(slot => (
+                                              <option key={slot} value={slot}>{slot}</option>
+                                            ))}
+                                            {!ALL_COMMON_SLOTS.includes(f.timeSlot) && (
+                                              <option value={f.timeSlot}>{f.timeSlot}</option>
+                                            )}
+                                          </select>
+                                        </td>
+                                        {/* Pasted Home Team Cell */}
+                                        <td className="py-3 px-3 font-semibold text-slate-200">
+                                          {f.homeTeam}
+                                        </td>
+                                        {/* Mapped Scotter Team Selection */}
+                                        <td className="py-3 px-3">
+                                          <div className="flex flex-col gap-1">
+                                            <select
+                                              value={f.scotterTeam}
+                                              onChange={(e) => handleIndividualRemap(f.id, e.target.value)}
+                                              className={`bg-slate-900 border text-xs font-bold rounded-lg p-1.5 w-full text-white ${
+                                                mismatch ? 'border-amber-500 focus:border-amber-400' : 'border-slate-700 focus:border-blue-500'
+                                              }`}
+                                            >
+                                              {SCOTTER_TEAMS.map((t) => (
+                                                <option key={t.name} value={t.name}>
+                                                  {t.name}
+                                                </option>
+                                              ))}
+                                            </select>
+                                            {mismatch && (
+                                              <span className="text-[9px] text-amber-400 font-black flex items-center gap-1">
+                                                ⚠️ Mismatched Name Suggested
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+                                        <td className="py-3 px-3 text-slate-400 font-medium">
+                                          {f.awayTeam}
+                                        </td>
+                                        {/* Pitch Format - Editable */}
+                                        <td className="py-3 px-3 text-center whitespace-nowrap">
+                                          <select
+                                            value={f.pitchId}
+                                            onChange={(e) => handleUpdateParsedField(f.id, 'pitchId', e.target.value as PitchSize)}
+                                            className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 font-extrabold focus:outline-none focus:border-blue-500 text-center"
+                                          >
+                                            <option value="5v5">5v5</option>
+                                            <option value="7v7">7v7</option>
+                                            <option value="9v9">9v9</option>
+                                            <option value="11v11">11v11</option>
+                                          </select>
+                                        </td>
+                                        <td className="py-3 px-3 text-center">
+                                          {isAlreadyBooked && matchBooking ? (
+                                            <div className="flex flex-col items-center gap-1.5">
+                                              <span className="bg-emerald-950/80 text-emerald-400 border border-emerald-800 text-[10px] font-black uppercase px-2 py-0.5 rounded-md flex items-center justify-center gap-1">
+                                                <Check className="w-3.5 h-3.5" /> Booked
+                                              </span>
+                                              <button
+                                                onClick={() => {
+                                                  onCancelBooking(matchBooking.id);
+                                                  setImportFeedback(`Successfully unbooked match for ${f.scotterTeam} on ${f.date} from the Pitch Diary.`);
+                                                }}
+                                                className="bg-red-500/10 hover:bg-red-500 text-red-400 border border-red-500/30 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded hover:text-white transition-all cursor-pointer"
+                                                title="Unbook this fixture immediately from the pitch"
+                                              >
+                                                Unbook
+                                              </button>
+                                            </div>
+                                          ) : isRealClash ? (
+                                            <span className="bg-red-950/80 text-red-400 border border-red-800 text-[10px] font-black uppercase px-2 py-1 rounded-md">
+                                              ❌ Clash: {matchBooking.teamName}
+                                            </span>
+                                          ) : (
+                                            <span className="bg-blue-950/80 text-blue-400 border border-blue-800 text-[10px] font-black uppercase px-2 py-1 rounded-md">
+                                              ✅ Ready
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="py-3 px-3 text-center">
+                                          <div className="flex items-center justify-center space-x-1">
+                                            <button
+                                              onClick={() => handleToggleHomeAway(f.id)}
+                                              className="text-slate-400 hover:text-amber-400 p-1 rounded hover:bg-slate-900 transition-colors"
+                                              title="Move to Away Match (Swap Home/Away)"
+                                            >
+                                              <ArrowRightLeft className="w-3.5 h-3.5" />
+                                            </button>
+                                            <button
+                                              onClick={() => {
+                                                setParsedFixtures(prev => prev.filter(item => item.id !== f.id));
+                                                setSelectedParsedIds(prev => prev.filter(id => id !== f.id));
+                                              }}
+                                              className="text-slate-400 hover:text-red-400 p-1 rounded hover:bg-slate-900 transition-colors"
+                                              title="Remove Home Fixture"
+                                            >
+                                              <Trash2 className="w-4 h-4" />
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Away Fixtures Section */}
+                        {awayParsedFixtures.length > 0 && (
+                          <div className="space-y-3 pt-4 border-t border-slate-800">
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                              <div>
+                                <h5 className="text-xs font-extrabold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+                                  ✈️ Away Fixtures ({awayParsedFixtures.length})
+                                </h5>
+                                <p className="text-[10px] text-slate-400">
+                                  These are detected as away matches (played at opponent grounds). They are kept separate and do not block home pitches. Click headers to sort.
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const homeIds = homeParsedFixtures.map(f => f.id);
+                                  setParsedFixtures(prev => prev.filter(f => homeIds.includes(f.id)));
+                                }}
+                                className="text-xs font-semibold text-red-400 hover:text-red-300 hover:bg-red-950/30 border border-red-900/40 px-3 py-1.5 rounded-lg transition-colors uppercase tracking-wider text-[10px]"
+                              >
+                                Remove All Away Matches
+                              </button>
+                            </div>
+
+                            <div className="overflow-x-auto rounded-lg border border-slate-800">
+                              <table className="w-full text-left border-collapse">
+                                <thead>
+                                  <tr className="bg-slate-900 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                                    {renderSortHeader('Date', 'date')}
+                                    {renderSortHeader('Kick-Off Time', 'time')}
+                                    {renderSortHeader('Scotter Team', 'scotterTeam')}
+                                    {renderSortHeader('Pasted Home Team (Opponent)', 'homeTeam')}
+                                    {renderSortHeader('Away Team (Scotter)', 'awayTeam')}
+                                    <th className="py-2.5 px-3">Competition</th>
+                                    <th className="py-2.5 px-3 text-center">Reference Status</th>
+                                    <th className="py-2.5 px-3 text-center w-12">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-900 text-xs text-slate-300">
+                                  {sortedAwayFixtures.map((f) => {
+                                    return (
+                                      <tr key={f.id} className="hover:bg-slate-900/60">
+                                        <td className="py-3 px-3 whitespace-nowrap font-medium text-slate-300">
+                                          {f.date}
+                                        </td>
+                                        <td className="py-3 px-3 whitespace-nowrap text-slate-300">
+                                          {f.timeSlot}
+                                        </td>
+                                        <td className="py-3 px-3 font-semibold text-blue-400">
+                                          {f.scotterTeam}
+                                        </td>
+                                        <td className="py-3 px-3 text-slate-400">
+                                          {f.homeTeam}
+                                        </td>
+                                        <td className="py-3 px-3 text-slate-200 font-medium">
+                                          {f.awayTeam}
+                                        </td>
+                                        <td className="py-3 px-3 text-slate-400">
+                                          {f.competition}
+                                        </td>
+                                        <td className="py-3 px-3 text-center whitespace-nowrap">
+                                          <span className="bg-slate-900 text-slate-400 border border-slate-800 text-[9px] font-bold uppercase px-2 py-0.5 rounded-md">
+                                            ✈️ Away Match
+                                          </span>
+                                        </td>
+                                        <td className="py-3 px-3 text-center">
+                                          <div className="flex items-center justify-center space-x-1">
+                                            <button
+                                              onClick={() => handleToggleHomeAway(f.id)}
+                                              className="text-slate-400 hover:text-emerald-400 p-1 rounded hover:bg-slate-900 transition-colors"
+                                              title="Move to Home Match (Swap Home/Away)"
+                                            >
+                                              <ArrowRightLeft className="w-3.5 h-3.5" />
+                                            </button>
+                                            <button
+                                              onClick={() => {
+                                                setParsedFixtures(prev => prev.filter(item => item.id !== f.id));
+                                                setSelectedParsedIds(prev => prev.filter(id => id !== f.id));
+                                              }}
+                                              className="text-slate-400 hover:text-red-400 p-1 rounded hover:bg-slate-900 transition-colors"
+                                              title="Remove Away Match"
+                                            >
+                                              <Trash2 className="w-4 h-4" />
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex flex-col sm:flex-row justify-between items-center pt-2 gap-3">
+                          <button
+                            onClick={() => {
+                              setParsedFixtures([]);
+                              setSelectedParsedIds([]);
+                              setPasteText('');
+                              setImportFeedback('');
+                            }}
+                            className="bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-bold py-2 px-4 rounded-xl border border-slate-800 transition-all uppercase tracking-wider w-full sm:w-auto"
+                          >
+                            Clear Parser Results
+                          </button>
+                          
+                          <div className="flex flex-col sm:flex-row gap-2.5 w-full sm:w-auto">
+                            {homeParsedFixtures.filter(f => selectedParsedIds.includes(f.id) && getFixtureStatus(f).type === 'BOOKED_SELF').length > 0 && (
+                              <button
+                                onClick={handleUnbookParsedFixtures}
+                                className="bg-red-600 hover:bg-red-500 text-white text-xs font-extrabold py-2.5 px-6 rounded-xl flex items-center justify-center space-x-2 shadow-md transition-all uppercase tracking-wider w-full sm:w-auto"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                <span>Unbook {homeParsedFixtures.filter(f => selectedParsedIds.includes(f.id) && getFixtureStatus(f).type === 'BOOKED_SELF').length} Selected</span>
+                              </button>
+                            )}
+                            
+                            <button
+                              onClick={handleImportParsedFixtures}
+                              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold py-2.5 px-6 rounded-xl flex items-center justify-center space-x-2 shadow-md transition-all uppercase tracking-wider w-full sm:w-auto"
+                            >
+                              <CheckCircle className="w-4 h-4" />
+                              <span>Import and Book {homeParsedFixtures.filter(f => selectedParsedIds.includes(f.id)).length} Home Match(es)</span>
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               )}
 
@@ -1612,6 +3257,51 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                 </div>
               </div>
 
+              {/* FA Club ID & Leagues Explanation Card */}
+              <div className="bg-slate-900/40 border border-slate-800/80 p-4 rounded-xl space-y-3">
+                <div className="flex items-start space-x-2.5 text-blue-400">
+                  <HelpCircle className="w-4 h-4 mt-0.5 text-blue-400 flex-shrink-0" />
+                  <div>
+                    <h5 className="text-xs font-black uppercase tracking-wider text-slate-200">
+                      How FA Full-Time Club ID & Leagues Work
+                    </h5>
+                    <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                      Your unique Club ID (<strong className="text-blue-300 font-bold">{faClubId}</strong>) serves as a parent reference. Because all Scotter United teams are registered under this central club account, querying by this ID pulls fixtures from <strong className="text-slate-300 font-extrabold">all 5 leagues</strong> simultaneously:
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 pt-1">
+                  <div className="bg-slate-950 border border-slate-800/80 p-2 rounded-lg text-center">
+                    <span className="block text-[10px] font-black text-blue-400">Jack Kalson</span>
+                    <span className="text-[9px] text-slate-400">Junior League</span>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800/80 p-2 rounded-lg text-center">
+                    <span className="block text-[10px] font-black text-emerald-400">Scunthorpe Youth</span>
+                    <span className="text-[9px] text-slate-400">Youth League</span>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800/80 p-2 rounded-lg text-center">
+                    <span className="block text-[10px] font-black text-purple-400">Scunthorpe Mini</span>
+                    <span className="text-[9px] text-slate-400">Mini Soccer</span>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800/80 p-2 rounded-lg text-center">
+                    <span className="block text-[10px] font-black text-pink-400">Lincs Women</span>
+                    <span className="text-[9px] text-slate-400">& Girls League</span>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800/80 p-2 rounded-lg text-center col-span-2 sm:col-span-1">
+                    <span className="block text-[10px] font-black text-amber-400">Lincs County</span>
+                    <span className="text-[9px] text-slate-400">Veterans League</span>
+                  </div>
+                </div>
+
+                <div className="bg-blue-950/20 border border-blue-900/30 p-2.5 px-3.5 rounded-lg text-[10.5px] text-slate-400 flex items-center gap-2">
+                  <span className="bg-blue-900/50 text-blue-200 text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase">Year-Round Audit</span>
+                  <span>
+                    Both past fixtures (including <strong className="text-white">March & April</strong>) and upcoming matchdays are fully accessible to ensure correct historic tracking and prevent slot duplication.
+                  </span>
+                </div>
+              </div>
+
               {/* Feedback Message */}
               {importFeedback && (
                 <div className="bg-blue-950/80 border border-blue-800 text-blue-300 px-4 py-3 rounded-lg text-xs font-bold flex items-center space-x-2">
@@ -1648,7 +3338,7 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                       <h5 className="text-xs font-black uppercase tracking-wider">Filter FA Fixtures</h5>
                     </div>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                       <div>
                         <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Filter by Team</label>
                         <select
@@ -1674,6 +3364,20 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                           {Array.from(new Set<string>(loadedFixtures.map(f => f.pitchId))).sort().map((p: string) => (
                             <option key={p} value={p}>{p} Format</option>
                           ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Filter by Season / Period</label>
+                        <select
+                          value={faFilterPeriod}
+                          onChange={(e) => setFaFilterPeriod(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-bold text-white focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="ALL">Show All 2026 Matches ({loadedFixtures.length})</option>
+                          <option value="PAST_MARCH_APRIL">Past Matches: March & April ({loadedFixtures.filter(f => f.date >= '2026-03-01' && f.date <= '2026-04-30').length})</option>
+                          <option value="PAST_JUNE">Past Matches: June ({loadedFixtures.filter(f => f.date >= '2026-06-01' && f.date <= '2026-06-30').length})</option>
+                          <option value="UPCOMING">Upcoming Matches: July Onwards ({loadedFixtures.filter(f => f.date >= '2026-07-01').length})</option>
                         </select>
                       </div>
 
@@ -1736,7 +3440,40 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                         className="bg-red-600 hover:bg-red-500 text-white text-[11px] font-extrabold py-1.5 px-3.5 rounded-lg flex items-center space-x-1.5 shadow transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>Bulk Unbook ({filteredFixtures.filter(f => selectedFixtureIds.includes(f.id) && getFixtureStatus(f).type === 'BOOKED_SELF').length} booked)</span>
+                        <span>Bulk Unbook ({filteredFixtures.filter(f => selectedFixtureIds.includes(f.id) && (getFixtureStatus(f).type === 'BOOKED_SELF' || getFixtureStatus(f).type === 'RESOLVED_CLASH')).length} booked)</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          const selectedFixtures = filteredFixtures.filter(f => selectedFixtureIds.includes(f.id));
+                          if (selectedFixtures.length === 0) {
+                            setImportFeedback('No fixtures are selected to delete!');
+                            return;
+                          }
+
+                          let cancelCount = 0;
+                          selectedFixtures.forEach((f) => {
+                            const statusInfo = getFixtureStatus(f);
+                            if (statusInfo.booking) {
+                              onCancelBooking(statusInfo.booking.id);
+                              cancelCount++;
+                            }
+                          });
+
+                          const deletedIds = selectedFixtures.map(f => f.id);
+                          setLoadedFixtures(prev => prev.filter(f => !deletedIds.includes(f.id)));
+                          setSelectedFixtureIds(prev => prev.filter(id => !deletedIds.includes(id)));
+
+                          if (cancelCount > 0) {
+                            setImportFeedback(`Successfully cancelled ${cancelCount} diary bookings and removed ${deletedIds.length} fixtures from the list.`);
+                          } else {
+                            setImportFeedback(`Successfully removed ${deletedIds.length} fixtures from the list.`);
+                          }
+                        }}
+                        className="bg-slate-700 hover:bg-slate-600 text-white text-[11px] font-extrabold py-1.5 px-3.5 rounded-lg flex items-center space-x-1.5 shadow transition-colors"
+                        title="Delete selected fixtures entirely (and cancel their bookings if they were booked)"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Bulk Delete ({selectedFixtureIds.filter(id => filteredFixtures.some(f => f.id === id)).length} selected)</span>
                       </button>
                     </div>
                   </div>
@@ -1755,9 +3492,57 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                                 title="Toggle select all filtered matches"
                               />
                             </th>
-                            <th className="px-4 py-3">Fixture Details</th>
-                            <th className="px-4 py-3">Pitch Format</th>
-                            <th className="px-4 py-3">Date & Time</th>
+                            <th className="px-4 py-3 cursor-pointer select-none hover:bg-slate-800 transition-colors" onClick={() => {
+                              if (faSortField === 'team') {
+                                setFaSortAsc(!faSortAsc);
+                              } else {
+                                setFaSortField('team');
+                                setFaSortAsc(true);
+                              }
+                            }}>
+                              <div className="flex items-center space-x-1">
+                                <span>Fixture Details</span>
+                                {faSortField === 'team' ? (
+                                  faSortAsc ? <ArrowUp className="w-3 h-3 text-blue-400" /> : <ArrowDown className="w-3 h-3 text-blue-400" />
+                                ) : (
+                                  <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                                )}
+                              </div>
+                            </th>
+                            <th className="px-4 py-3 cursor-pointer select-none hover:bg-slate-800 transition-colors" onClick={() => {
+                              if (faSortField === 'pitch') {
+                                setFaSortAsc(!faSortAsc);
+                              } else {
+                                setFaSortField('pitch');
+                                setFaSortAsc(true);
+                              }
+                            }}>
+                              <div className="flex items-center space-x-1">
+                                <span>Pitch Format</span>
+                                {faSortField === 'pitch' ? (
+                                  faSortAsc ? <ArrowUp className="w-3 h-3 text-blue-400" /> : <ArrowDown className="w-3 h-3 text-blue-400" />
+                                ) : (
+                                  <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                                )}
+                              </div>
+                            </th>
+                            <th className="px-4 py-3 cursor-pointer select-none hover:bg-slate-800 transition-colors" onClick={() => {
+                              if (faSortField === 'date') {
+                                setFaSortAsc(!faSortAsc);
+                              } else {
+                                setFaSortField('date');
+                                setFaSortAsc(true);
+                              }
+                            }}>
+                              <div className="flex items-center space-x-1">
+                                <span>Date & Time</span>
+                                {faSortField === 'date' ? (
+                                  faSortAsc ? <ArrowUp className="w-3 h-3 text-blue-400" /> : <ArrowDown className="w-3 h-3 text-blue-400" />
+                                ) : (
+                                  <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                                )}
+                              </div>
+                            </th>
                             <th className="px-4 py-3">Status</th>
                             <th className="px-4 py-3 text-right">Action</th>
                           </tr>
@@ -1769,11 +3554,10 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                             return (
                               <React.Fragment key={fixture.id}>
                                 <tr 
-                                  className={`hover:bg-slate-800/30 transition-colors ${(statusInfo.type === 'VACANT' || statusInfo.type === 'BOOKED_SELF') ? 'cursor-pointer' : ''}`}
+                                  className="hover:bg-slate-800/30 transition-colors cursor-pointer"
                                   onClick={(e) => {
                                     const target = e.target as HTMLElement;
                                     if (
-                                      (statusInfo.type === 'VACANT' || statusInfo.type === 'BOOKED_SELF') &&
                                       target.tagName !== 'BUTTON' && 
                                       target.tagName !== 'INPUT' && 
                                       target.tagName !== 'A' && 
@@ -1788,9 +3572,8 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                                     <input
                                       type="checkbox"
                                       checked={isSelected}
-                                      disabled={statusInfo.type !== 'VACANT' && statusInfo.type !== 'BOOKED_SELF'}
                                       onChange={() => toggleFixtureSelection(fixture.id)}
-                                      className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-950 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                      className="w-4 h-4 rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-950 cursor-pointer"
                                     />
                                   </td>
                                   <td className="px-4 py-3.5">
@@ -1820,6 +3603,15 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                                       <span className="inline-flex items-center text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-900/50 px-2 py-0.5 rounded font-bold uppercase">
                                         <Check className="w-3 h-3 mr-1" /> Diary Booked
                                       </span>
+                                    ) : statusInfo.type === 'RESOLVED_CLASH' ? (
+                                      <div className="flex flex-col items-start">
+                                        <span className="inline-flex items-center text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-900/50 px-2 py-0.5 rounded font-bold uppercase">
+                                          <Check className="w-3 h-3 mr-1" /> Clash Resolved
+                                        </span>
+                                        <span className="text-[9px] text-slate-400 font-semibold mt-0.5 italic">
+                                          Moved to {statusInfo.booking?.timeSlot}
+                                        </span>
+                                      </div>
                                     ) : statusInfo.type === 'CLASH' ? (
                                       <span className="inline-flex items-center text-[10px] bg-red-950 text-red-400 border border-red-900/50 px-2 py-0.5 rounded font-bold uppercase" title={`This slot is already booked by ${statusInfo.booking?.teamName}`}>
                                         <AlertTriangle className="w-3 h-3 mr-1 text-red-400" /> Clash: {statusInfo.booking?.teamName}
@@ -1831,175 +3623,348 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                                     )}
                                   </td>
                                   <td className="px-4 py-3.5 text-right">
-                                    {statusInfo.type === 'BOOKED_SELF' && statusInfo.booking ? (
-                                      canManagerUnbook(currentUser, statusInfo.booking) ? (
-                                        confirmUnbookFixtureId === fixture.id ? (
-                                          <div className="flex items-center justify-end space-x-1">
-                                            <span className="text-[9px] font-bold text-red-400 uppercase">Unbook?</span>
-                                            <button
-                                              onClick={() => {
-                                                if (statusInfo.booking) {
-                                                  onCancelBooking(statusInfo.booking.id);
-                                                  setImportFeedback(`Successfully unbooked match: ${fixture.homeTeam} vs ${fixture.awayTeam}`);
-                                                }
-                                                setConfirmUnbookFixtureId(null);
-                                              }}
-                                              className="bg-red-600 hover:bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow-sm"
-                                            >
-                                              Yes
-                                            </button>
-                                            <button
-                                              onClick={() => setConfirmUnbookFixtureId(null)}
-                                              className="bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-black px-1.5 py-0.5 rounded shadow-sm"
-                                            >
-                                              No
-                                            </button>
-                                          </div>
-                                        ) : (
-                                          <button
-                                            onClick={() => setConfirmUnbookFixtureId(fixture.id)}
-                                            className="text-[10px] font-black uppercase py-1.5 px-3 rounded-lg bg-red-600 hover:bg-red-500 text-white transition-all shadow-sm"
-                                          >
-                                            Unbook Match
-                                          </button>
-                                        )
-                                      ) : (
+                                    {(statusInfo.type === 'BOOKED_SELF' || statusInfo.type === 'RESOLVED_CLASH') && statusInfo.booking ? (
+                                      <div className="flex items-center justify-end space-x-2">
+                                        {/* Rearrange option button */}
                                         <button
-                                          disabled
-                                          className="text-[10px] font-black uppercase py-1.5 px-3 rounded-lg bg-slate-800 text-slate-500 cursor-not-allowed"
-                                        >
-                                          Booked
-                                        </button>
-                                      )
-                                    ) : statusInfo.type === 'CLASH' ? (
-                                      <button
-                                        onClick={() => {
-                                          if (resolvingClashId === fixture.id) {
-                                            setResolvingClashId(null);
-                                          } else {
-                                            setResolvingClashId(fixture.id);
-                                            const vacs = getVacantSlots(fixture.pitchId, fixture.date);
-                                            if (vacs.length > 0) {
-                                              setAlternativeSlot(vacs[0]);
-                                              setExistingBookingSlot(vacs[0]);
+                                          onClick={() => {
+                                            if (resolvingClashId === fixture.id) {
+                                              setResolvingClashId(null);
                                             } else {
-                                              setAlternativeSlot('');
-                                              setExistingBookingSlot('');
+                                              setResolvingClashId(fixture.id);
+                                              setRearrangeDate(fixture.date);
+                                              setRearrangePitch(fixture.pitchId);
+                                              setRearrangeSlot(fixture.timeSlot);
                                             }
-                                          }
-                                        }}
-                                        className={`text-[10px] font-black uppercase py-1.5 px-3 rounded-lg transition-all shadow-sm ${
-                                          resolvingClashId === fixture.id
-                                            ? 'bg-slate-700 hover:bg-slate-600 text-white'
-                                            : 'bg-amber-600 hover:bg-amber-500 text-white'
-                                        }`}
-                                      >
-                                        {resolvingClashId === fixture.id ? 'Cancel Rebook' : 'Resolve Clash'}
-                                      </button>
+                                          }}
+                                          className={`text-[10px] font-bold uppercase py-1.5 px-2.5 rounded hover:bg-slate-800 transition-all ${
+                                            resolvingClashId === fixture.id ? 'text-amber-400 bg-slate-800' : 'text-slate-400 hover:text-white'
+                                          }`}
+                                          title="Rearrange this fixture's date, time or pitch format"
+                                        >
+                                          Rearrange
+                                        </button>
+
+                                        {/* Green Action Badge indicating Scheduled/Resolved state */}
+                                        <span className="text-[10px] font-black uppercase py-1.5 px-3 rounded-lg bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 shadow-sm inline-flex items-center space-x-1.5">
+                                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                          <span>
+                                            {statusInfo.type === 'RESOLVED_CLASH' || 
+                                             bookings.some(b => b.pitchId === fixture.pitchId && b.date === fixture.date && b.notes?.includes('resolve FA clash'))
+                                              ? 'Resolved'
+                                              : 'Booked'}
+                                          </span>
+                                        </span>
+
+                                        {/* Unbook button/confirm dialogue if the user is authorized */}
+                                        {canManagerUnbook(currentUser, statusInfo.booking) ? (
+                                          confirmUnbookFixtureId === fixture.id ? (
+                                            <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                                              <span className="text-[9px] font-bold text-red-400 uppercase px-1">Unbook?</span>
+                                              <button
+                                                onClick={() => {
+                                                  if (statusInfo.booking) {
+                                                    onCancelBooking(statusInfo.booking.id);
+                                                    setImportFeedback(`Successfully unbooked match: ${fixture.homeTeam} vs ${fixture.awayTeam}`);
+                                                  }
+                                                  setConfirmUnbookFixtureId(null);
+                                                }}
+                                                className="bg-red-600 hover:bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow-sm"
+                                              >
+                                                Yes
+                                              </button>
+                                              <button
+                                                onClick={() => setConfirmUnbookFixtureId(null)}
+                                                className="bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-black px-1.5 py-0.5 rounded shadow-sm"
+                                              >
+                                                No
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <button
+                                              onClick={() => setConfirmUnbookFixtureId(fixture.id)}
+                                              className="text-slate-400 hover:text-red-400 text-[10px] font-bold uppercase transition-colors px-2 py-1.5 rounded hover:bg-slate-800"
+                                              title="Unbook this match from the diary"
+                                            >
+                                              Unbook
+                                            </button>
+                                          )
+                                        ) : (
+                                          <span className="text-[10px] font-bold uppercase text-slate-500 px-2 py-1.5 cursor-not-allowed">
+                                            Locked
+                                          </span>
+                                        )}
+                                      </div>
+                                    ) : statusInfo.type === 'CLASH' ? (
+                                      <div className="flex items-center justify-end space-x-2">
+                                        <button
+                                          onClick={() => {
+                                            setLoadedFixtures(prev => prev.filter(f => f.id !== fixture.id));
+                                            setImportFeedback(`Removed fixture: ${fixture.homeTeam} vs ${fixture.awayTeam}`);
+                                          }}
+                                          className="text-slate-400 hover:text-red-400 text-[10px] font-bold uppercase transition-colors px-2 py-1.5 rounded hover:bg-slate-800"
+                                          title="Remove this fixture from the schedule list entirely"
+                                        >
+                                          Delete
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            if (resolvingClashId === fixture.id) {
+                                              setResolvingClashId(null);
+                                            } else {
+                                              setResolvingClashId(fixture.id);
+                                              const vacs = getVacantSlots(fixture.pitchId, fixture.date);
+                                              if (vacs.length > 0) {
+                                                setAlternativeSlot(vacs[0]);
+                                                setExistingBookingSlot(vacs[0]);
+                                              } else {
+                                                setAlternativeSlot('');
+                                                setExistingBookingSlot('');
+                                              }
+                                            }
+                                          }}
+                                          className={`text-[10px] font-black uppercase py-1.5 px-3 rounded-lg transition-all shadow-sm ${
+                                            resolvingClashId === fixture.id
+                                              ? 'bg-slate-700 hover:bg-slate-600 text-white'
+                                              : 'bg-amber-600 hover:bg-amber-500 text-white'
+                                          }`}
+                                        >
+                                          {resolvingClashId === fixture.id ? 'Cancel Rebook' : 'Resolve Clash'}
+                                        </button>
+                                      </div>
                                     ) : (
-                                      <button
-                                        onClick={() => handleImportFixture(fixture)}
-                                        className="text-[10px] font-black uppercase py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition-all"
-                                      >
-                                        Book Pitch
-                                      </button>
+                                      <div className="flex items-center justify-end space-x-2">
+                                        <button
+                                          onClick={() => {
+                                            setLoadedFixtures(prev => prev.filter(f => f.id !== fixture.id));
+                                            setImportFeedback(`Removed fixture: ${fixture.homeTeam} vs ${fixture.awayTeam}`);
+                                          }}
+                                          className="text-slate-400 hover:text-red-400 text-[10px] font-bold uppercase transition-colors px-2 py-1.5 rounded hover:bg-slate-800"
+                                          title="Remove this fixture from the schedule list entirely"
+                                        >
+                                          Delete
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            if (resolvingClashId === fixture.id) {
+                                              setResolvingClashId(null);
+                                            } else {
+                                              setResolvingClashId(fixture.id);
+                                              setRearrangeDate(fixture.date);
+                                              setRearrangePitch(fixture.pitchId);
+                                              setRearrangeSlot(fixture.timeSlot);
+                                            }
+                                          }}
+                                          className={`text-[10px] font-bold uppercase py-1.5 px-2.5 rounded hover:bg-slate-800 transition-all ${
+                                            resolvingClashId === fixture.id ? 'text-amber-400 bg-slate-800' : 'text-slate-400 hover:text-white'
+                                          }`}
+                                          title="Rearrange this fixture's date, time or pitch format"
+                                        >
+                                          Rearrange
+                                        </button>
+                                        <button
+                                          onClick={() => handleImportFixture(fixture)}
+                                          className="text-[10px] font-black uppercase py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition-all whitespace-nowrap"
+                                        >
+                                          Book Pitch
+                                        </button>
+                                      </div>
                                     )}
                                   </td>
                                 </tr>
 
                                 {resolvingClashId === fixture.id && (
-                                  <tr className="bg-slate-900/60 border-y border-red-900/40">
+                                  <tr className="bg-slate-900/80 border-y border-slate-800">
                                     <td colSpan={6} className="p-4">
-                                      <div className="space-y-4">
-                                        <div className="flex items-center space-x-2 text-amber-400">
-                                          <AlertTriangle className="w-4 h-4" />
-                                          <h4 className="font-extrabold text-xs uppercase tracking-tight">
-                                            Resolve Clash & Rebook Options
-                                          </h4>
-                                        </div>
-                                        
-                                        <p className="text-[11px] text-slate-400">
-                                          This FA fixture clashes with <strong className="text-white">{statusInfo.booking?.teamName}</strong> who already booked <strong className="text-white">{fixture.timeSlot}</strong> on the {fixture.pitchId} pitch format. Select a rebooking strategy:
-                                        </p>
-
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1 text-left">
-                                          {/* Option A: Reschedule incoming FA match */}
-                                          <div className="bg-slate-950/60 p-3.5 rounded-lg border border-slate-800 space-y-2.5">
-                                            <p className="text-[11px] font-extrabold uppercase text-blue-400 tracking-wider">
-                                              Option A: Rebook incoming FA Match to Vacant Slot
-                                            </p>
-                                            <p className="text-[10px] text-slate-400">
-                                              Keep {statusInfo.booking?.teamName} at {fixture.timeSlot}, and book this FA match at a different open slot on this day:
-                                            </p>
-                                            
-                                            {getVacantSlots(fixture.pitchId, fixture.date).length > 0 ? (
-                                              <div className="flex items-center gap-2">
-                                                <select
-                                                  value={alternativeSlot}
-                                                  onChange={(e) => setAlternativeSlot(e.target.value)}
-                                                  className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] font-bold text-slate-200 focus:outline-none focus:border-blue-500 flex-grow"
-                                                >
-                                                  {getVacantSlots(fixture.pitchId, fixture.date).map((slot) => (
-                                                    <option key={slot} value={slot}>
-                                                      {slot} (Vacant)
-                                                    </option>
-                                                  ))}
-                                                </select>
-                                                <button
-                                                  onClick={() => handleRescheduleFA(fixture, alternativeSlot)}
-                                                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-1.5 rounded text-[10px] uppercase shadow-sm transition-all whitespace-nowrap"
-                                                >
-                                                  Book Slot
-                                                </button>
-                                              </div>
-                                            ) : (
-                                              <p className="text-[10px] text-red-400 font-bold italic">
-                                                No other vacant slots are available on this pitch on this date.
-                                              </p>
-                                            )}
+                                      {statusInfo.type === 'CLASH' ? (
+                                        <div className="space-y-4">
+                                          <div className="flex items-center space-x-2 text-amber-400">
+                                            <AlertTriangle className="w-4 h-4" />
+                                            <h4 className="font-extrabold text-xs uppercase tracking-tight">
+                                              Resolve Clash & Rebook Options
+                                            </h4>
                                           </div>
+                                          
+                                          <p className="text-[11px] text-slate-400 text-left">
+                                            This FA fixture clashes with <strong className="text-white">{statusInfo.booking?.teamName}</strong> who already booked <strong className="text-white">{fixture.timeSlot}</strong> on the {fixture.pitchId} pitch format. Select a rebooking strategy:
+                                          </p>
 
-                                          {/* Option B: Reschedule existing booking */}
-                                          <div className="bg-slate-950/60 p-3.5 rounded-lg border border-slate-800 space-y-2.5">
-                                            <p className="text-[11px] font-extrabold uppercase text-amber-400 tracking-wider">
-                                              Option B: Move Existing Booking & Book FA Match Here
-                                            </p>
-                                            <p className="text-[10px] text-slate-400">
-                                              Move {statusInfo.booking?.teamName}'s booking to an alternative vacant slot, freeing up {fixture.timeSlot} for this FA match:
-                                            </p>
-
-                                            {getVacantSlots(fixture.pitchId, fixture.date).length > 0 ? (
-                                              <div className="flex items-center gap-2">
-                                                <select
-                                                  value={existingBookingSlot}
-                                                  onChange={(e) => setExistingBookingSlot(e.target.value)}
-                                                  className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] font-bold text-slate-200 focus:outline-none focus:border-amber-500 flex-grow"
-                                                >
-                                                  {getVacantSlots(fixture.pitchId, fixture.date).map((slot) => (
-                                                    <option key={slot} value={slot}>
-                                                      Move to {slot} (Vacant)
-                                                    </option>
-                                                  ))}
-                                                </select>
-                                                <button
-                                                  onClick={() => {
-                                                    if (statusInfo.booking) {
-                                                      handleRescheduleExistingAndBookFA(fixture, statusInfo.booking, existingBookingSlot);
-                                                    }
-                                                  }}
-                                                  className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-3 py-1.5 rounded text-[10px] uppercase shadow-sm transition-all whitespace-nowrap"
-                                                >
-                                                  Move & Book
-                                                </button>
-                                              </div>
-                                            ) : (
-                                              <p className="text-[10px] text-red-400 font-bold italic">
-                                                No other vacant slots are available on this pitch to move the booking to.
+                                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1 text-left">
+                                            {/* Option A: Reschedule incoming FA match */}
+                                            <div className="bg-slate-950/60 p-3.5 rounded-lg border border-slate-800 space-y-2.5">
+                                              <p className="text-[11px] font-extrabold uppercase text-blue-400 tracking-wider">
+                                                Option A: Rebook incoming FA Match to Vacant Slot
                                               </p>
-                                            )}
+                                              <p className="text-[10px] text-slate-400">
+                                                Keep {statusInfo.booking?.teamName} at {fixture.timeSlot}, and book this FA match at a different open slot on this day:
+                                              </p>
+                                              
+                                              {getVacantSlots(fixture.pitchId, fixture.date).length > 0 ? (
+                                                <div className="flex items-center gap-2">
+                                                  <select
+                                                    value={alternativeSlot}
+                                                    onChange={(e) => setAlternativeSlot(e.target.value)}
+                                                    className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] font-bold text-slate-200 focus:outline-none focus:border-blue-500 flex-grow"
+                                                  >
+                                                    {getVacantSlots(fixture.pitchId, fixture.date).map((slot) => (
+                                                      <option key={slot} value={slot}>
+                                                        {slot} (Vacant)
+                                                      </option>
+                                                    ))}
+                                                  </select>
+                                                  <button
+                                                    onClick={() => handleRescheduleFA(fixture, alternativeSlot || getVacantSlots(fixture.pitchId, fixture.date)[0])}
+                                                    className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-1.5 rounded text-[10px] uppercase shadow-sm transition-all whitespace-nowrap"
+                                                  >
+                                                    Book Slot
+                                                  </button>
+                                                </div>
+                                              ) : (
+                                                <p className="text-[10px] text-red-400 font-bold italic">
+                                                  No other vacant slots are available on this pitch on this date.
+                                                </p>
+                                              )}
+                                            </div>
+
+                                            {/* Option B: Reschedule existing booking */}
+                                            <div className="bg-slate-950/60 p-3.5 rounded-lg border border-slate-800 space-y-2.5">
+                                              <p className="text-[11px] font-extrabold uppercase text-amber-400 tracking-wider">
+                                                Option B: Move Existing Booking & Book FA Match Here
+                                              </p>
+                                              <p className="text-[10px] text-slate-400">
+                                                Move {statusInfo.booking?.teamName}'s booking to an alternative vacant slot, freeing up {fixture.timeSlot} for this FA match:
+                                              </p>
+
+                                              {getVacantSlots(fixture.pitchId, fixture.date).length > 0 ? (
+                                                <div className="flex items-center gap-2">
+                                                  <select
+                                                    value={existingBookingSlot}
+                                                    onChange={(e) => setExistingBookingSlot(e.target.value)}
+                                                    className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] font-bold text-slate-200 focus:outline-none focus:border-amber-500 flex-grow"
+                                                  >
+                                                    {getVacantSlots(fixture.pitchId, fixture.date).map((slot) => (
+                                                      <option key={slot} value={slot}>
+                                                        Move to {slot} (Vacant)
+                                                      </option>
+                                                    ))}
+                                                  </select>
+                                                  <button
+                                                    onClick={() => {
+                                                      if (statusInfo.booking) {
+                                                        handleRescheduleExistingAndBookFA(fixture, statusInfo.booking, existingBookingSlot || getVacantSlots(fixture.pitchId, fixture.date)[0]);
+                                                      }
+                                                    }}
+                                                    className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-3 py-1.5 rounded text-[10px] uppercase shadow-sm transition-all whitespace-nowrap"
+                                                  >
+                                                    Move & Book
+                                                  </button>
+                                                </div>
+                                              ) : (
+                                                <p className="text-[10px] text-red-400 font-bold italic">
+                                                  No other vacant slots are available on this pitch to move the booking to.
+                                                </p>
+                                              )}
+                                            </div>
                                           </div>
                                         </div>
-                                      </div>
+                                      ) : (
+                                        // Rearrange General / Non-clashing / Booked Fixture Form
+                                        <div className="space-y-4">
+                                          <div className="flex items-center space-x-2 text-blue-400">
+                                            <CalendarRange className="w-4 h-4" />
+                                            <h4 className="font-extrabold text-xs uppercase tracking-tight">
+                                              Rearrange Fixture Schedule
+                                            </h4>
+                                          </div>
+                                          
+                                          <p className="text-[11px] text-slate-400 text-left">
+                                            Adjust the date, pitch format, or kickoff time slot for <strong className="text-white">{fixture.homeTeam} vs {fixture.awayTeam}</strong>. If this match is already booked, the booking in the diary will automatically be updated too.
+                                          </p>
+
+                                          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-1 items-end text-left">
+                                            {/* Date Selector */}
+                                            <div className="space-y-1.5">
+                                              <label className="text-[10px] font-bold text-slate-400 uppercase">Match Date</label>
+                                              <input
+                                                type="date"
+                                                value={rearrangeDate}
+                                                onChange={(e) => setRearrangeDate(e.target.value)}
+                                                className="bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs font-bold text-slate-200 focus:outline-none focus:border-blue-500 w-full"
+                                              />
+                                            </div>
+
+                                            {/* Pitch Size Selector */}
+                                            <div className="space-y-1.5">
+                                              <label className="text-[10px] font-bold text-slate-400 uppercase">Pitch Format</label>
+                                              <select
+                                                value={rearrangePitch}
+                                                onChange={(e) => {
+                                                  const newPitch = e.target.value as PitchSize;
+                                                  setRearrangePitch(newPitch);
+                                                  const config = pitchConfigs.find(p => p.id === newPitch);
+                                                  if (config && config.defaultSlots.length > 0) {
+                                                    setRearrangeSlot(config.defaultSlots[0]);
+                                                  }
+                                                }}
+                                                className="bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs font-bold text-slate-200 focus:outline-none focus:border-blue-500 w-full"
+                                              >
+                                                <option value="5v5">5v5 (Mini Soccer)</option>
+                                                <option value="7v7">7v7 (Mini Soccer)</option>
+                                                <option value="9v9">9v9 (Youth)</option>
+                                                <option value="11v11">11v11 (Senior)</option>
+                                              </select>
+                                            </div>
+
+                                            {/* Time Slot Selector */}
+                                            <div className="space-y-1.5">
+                                              <label className="text-[10px] font-bold text-slate-400 uppercase">Kickoff Time</label>
+                                              <select
+                                                value={rearrangeSlot}
+                                                onChange={(e) => setRearrangeSlot(e.target.value)}
+                                                className="bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs font-bold text-slate-200 focus:outline-none focus:border-blue-500 w-full"
+                                              >
+                                                {(() => {
+                                                  const currentPitchConfig = pitchConfigs.find(p => p.id === rearrangePitch);
+                                                  const slots = currentPitchConfig ? currentPitchConfig.defaultSlots : [];
+                                                  return slots.map((slot) => {
+                                                    // Check vacancy of this slot on the chosen date and pitch format
+                                                    const isSlotVacant = !bookings.some(b => {
+                                                      if (b.pitchId !== rearrangePitch || b.date !== rearrangeDate) return false;
+                                                      if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+                                                      const slotStart = parseTimeToMinutes(slot);
+                                                      const slotEnd = parseTimeToMinutes(getAdminEndTimeForSlot(rearrangePitch, rearrangeDate, slot));
+                                                      const bStart = parseTimeToMinutes(b.timeSlot);
+                                                      const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+                                                      return slotStart < bEnd && bStart < slotEnd;
+                                                    });
+                                                    return (
+                                                      <option key={slot} value={slot}>
+                                                        {slot} {isSlotVacant ? '🟢 (Vacant)' : '🔴 (Occupied)'}
+                                                      </option>
+                                                    );
+                                                  });
+                                                })()}
+                                              </select>
+                                            </div>
+
+                                            {/* Submit Button */}
+                                            <div className="flex space-x-2">
+                                              <button
+                                                onClick={() => handleSaveFixtureRearrangement(fixture.id, rearrangeDate, rearrangePitch, rearrangeSlot)}
+                                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold px-4 py-2 rounded text-[11px] uppercase shadow-sm transition-all flex-grow text-center"
+                                              >
+                                                Apply Changes
+                                              </button>
+                                              <button
+                                                onClick={() => setResolvingClashId(null)}
+                                                className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-extrabold px-3 py-2 rounded text-[11px] uppercase shadow-sm transition-all"
+                                              >
+                                                Cancel
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
                                     </td>
                                   </tr>
                                 )}

@@ -48,25 +48,25 @@ export const DEFAULT_PITCH_CONFIGS: PitchConfig[] = [
     id: '5v5',
     name: '5v5',
     description: 'Perfect for Under 7s and Under 8s matches.',
-    defaultSlots: ['09:30', '10:45', '12:00'],
+    defaultSlots: ['09:45', '10:45', '11:45'],
   },
   {
     id: '7v7',
     name: '7v7',
     description: 'Designed for Under 9s and Under 10s age groups.',
-    defaultSlots: ['09:30', '10:45', '12:00'],
+    defaultSlots: ['09:30', '10:45', '12:00', '13:15'],
   },
   {
     id: '9v9',
     name: '9v9',
     description: 'Designed for Under 11s and Under 12s age groups.',
-    defaultSlots: ['09:30', '10:45', '12:00'],
+    defaultSlots: ['09:30', '11:00', '12:30'],
   },
   {
     id: '11v11',
     name: '11v11',
     description: 'Full-size pitch for Under 13s to Adults.',
-    defaultSlots: ['09:30', '10:45', '12:00'],
+    defaultSlots: ['10:00', '12:00', '14:00', '16:00'],
   },
 ];
 
@@ -192,6 +192,116 @@ export interface FAFixture {
 
 const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
   {
+    id: 'fa-mar-1',
+    date: '2026-03-07',
+    timeSlot: '09:30',
+    pitchId: '9v9',
+    homeTeam: 'Scotter United U12s Juniors',
+    awayTeam: 'Gainsborough Trinity U12s',
+    competition: 'Jack Kalson Junior League',
+    scotterTeam: 'Scotter United U12s Juniors',
+  },
+  {
+    id: 'fa-mar-2',
+    date: '2026-03-07',
+    timeSlot: '10:45',
+    pitchId: '7v7',
+    homeTeam: 'Scotter United U9 Saints',
+    awayTeam: 'Kirton Lindsey U9s',
+    competition: 'Scunthorpe Youth Football League',
+    scotterTeam: 'Scotter United U9 Saints',
+  },
+  {
+    id: 'fa-mar-3',
+    date: '2026-03-08',
+    timeSlot: '10:45',
+    pitchId: '9v9',
+    homeTeam: 'Scotter United U11 Colts',
+    awayTeam: 'Barton Town U11s',
+    competition: 'Jack Kalson Junior League',
+    scotterTeam: 'Scotter United U11 Colts',
+  },
+  {
+    id: 'fa-mar-4',
+    date: '2026-03-08',
+    timeSlot: '12:00',
+    pitchId: '11v11',
+    homeTeam: 'Scotter United U18s',
+    awayTeam: 'App-Frod U18s',
+    competition: 'Lincolnshire Intermediate League',
+    scotterTeam: 'Scotter United U18s',
+  },
+  {
+    id: 'fa-mar-5',
+    date: '2026-03-14',
+    timeSlot: '09:30',
+    pitchId: '5v5',
+    homeTeam: 'Scotter United U8 Juniors',
+    awayTeam: 'Kirton Lindsey U8s',
+    competition: 'Scunthorpe Mini Soccer League',
+    scotterTeam: 'Scotter United U8 Juniors',
+  },
+  {
+    id: 'fa-apr-1',
+    date: '2026-04-11',
+    timeSlot: '09:30',
+    pitchId: '9v9',
+    homeTeam: 'Scotter United U12s Juniors',
+    awayTeam: 'Messingham Juniors U12s',
+    competition: 'Jack Kalson Junior League',
+    scotterTeam: 'Scotter United U12s Juniors',
+  },
+  {
+    id: 'fa-apr-2',
+    date: '2026-04-11',
+    timeSlot: '12:00',
+    pitchId: '11v11',
+    homeTeam: 'Scotter United U15s',
+    awayTeam: 'Bottesford Town U15s',
+    competition: 'Lincolnshire Intermediate League',
+    scotterTeam: 'Scotter United U15s',
+  },
+  {
+    id: 'fa-apr-3',
+    date: '2026-04-12',
+    timeSlot: '09:30',
+    pitchId: '9v9',
+    homeTeam: 'Scotter United U12 Girls',
+    awayTeam: 'Louth Girls U12',
+    competition: 'Lincs Women & Girls League',
+    scotterTeam: 'Scotter United U12 Girls',
+  },
+  {
+    id: 'fa-apr-4',
+    date: '2026-04-12',
+    timeSlot: '12:00',
+    pitchId: '11v11',
+    homeTeam: 'Scotter United Veterans',
+    awayTeam: 'Ruston Sports Vets',
+    competition: 'Lincs County Veterans League',
+    scotterTeam: 'Scotter United Veterans',
+  },
+  {
+    id: 'fa-apr-5',
+    date: '2026-04-25',
+    timeSlot: '09:30',
+    pitchId: '5v5',
+    homeTeam: 'Scotter United U7 Saints',
+    awayTeam: 'Crosby United U7s',
+    competition: 'Scunthorpe Mini Soccer League',
+    scotterTeam: 'Scotter United U7 Saints',
+  },
+  {
+    id: 'fa-apr-6',
+    date: '2026-04-25',
+    timeSlot: '12:00',
+    pitchId: '11v11',
+    homeTeam: 'Scotter United U13 Saints',
+    awayTeam: 'Brigg Town U13s',
+    competition: 'Jack Kalson Junior League',
+    scotterTeam: 'Scotter United U13 Saints',
+  },
+  {
     id: 'fa-1',
     date: '2026-06-27',
     timeSlot: '09:30',
@@ -285,7 +395,7 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
   {
     id: 'fa-10',
     date: '2026-07-04',
-    timeSlot: '12:00',
+    timeSlot: '10:00',
     pitchId: '11v11',
     homeTeam: 'Scotter United U15s',
     awayTeam: 'Barton Town U15s',
@@ -295,7 +405,7 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
   {
     id: 'fa-11',
     date: '2026-07-04',
-    timeSlot: '13:15',
+    timeSlot: '12:00',
     pitchId: '11v11',
     homeTeam: 'Scotter United U13 Saints',
     awayTeam: 'Appleby Frodingham U13s',
@@ -397,6 +507,32 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
   },
 ];
 
+// Calculate day shift to align 2026-06-27 to the Saturday of the current week
+const getDayShift = (): number => {
+  const targetDate = new Date('2026-06-27');
+  
+  // Find Saturday of the current week
+  const today = new Date();
+  const currentDay = today.getDay(); // 0 is Sunday, 6 is Saturday
+  const diffToSaturday = 6 - currentDay; // Days to add to reach Saturday
+  const saturdayOfCurrentWeek = new Date(today);
+  saturdayOfCurrentWeek.setDate(today.getDate() + diffToSaturday);
+  
+  // Difference in milliseconds
+  const diffTime = saturdayOfCurrentWeek.getTime() - targetDate.getTime();
+  // Difference in days, rounded
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays;
+};
+
+export const shiftDateString = (dateStr: string): string => {
+  if (!dateStr) return dateStr;
+  const shift = getDayShift();
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + shift);
+  return d.toISOString().split('T')[0];
+};
+
 export const MOCK_USERS: User[] = RAW_MOCK_USERS.map(u => ({
   ...u,
   teamName: u.teamName ? u.teamName.replace('Scotter United ', '') : undefined,
@@ -404,6 +540,7 @@ export const MOCK_USERS: User[] = RAW_MOCK_USERS.map(u => ({
 
 export const INITIAL_BOOKINGS: Booking[] = RAW_INITIAL_BOOKINGS.map(b => ({
   ...b,
+  date: shiftDateString(b.date),
   teamName: b.teamName.replace('Scotter United ', ''),
 }));
 
@@ -419,6 +556,7 @@ export const SCOTTER_TEAMS: ClubTeam[] = RAW_SCOTTER_TEAMS.map(t => ({
 
 export const MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = RAW_MOCK_FA_FULLTIME_FIXTURES.map(f => ({
   ...f,
+  date: shiftDateString(f.date),
   homeTeam: f.homeTeam.replace('Scotter United ', ''),
   awayTeam: f.awayTeam.replace('Scotter United ', ''),
   scotterTeam: f.scotterTeam.replace('Scotter United ', ''),
