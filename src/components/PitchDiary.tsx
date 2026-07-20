@@ -70,7 +70,7 @@ export default function PitchDiary({
   const [confirmDismissId, setConfirmDismissId] = useState<string | null>(null);
   const [confirmCancelBookingId, setConfirmCancelBookingId] = useState<string | null>(null);
   const [confirmUnbookFixtureId, setConfirmUnbookFixtureId] = useState<string | null>(null);
-  const [bulkActionConfirming, setBulkActionConfirming] = useState<'UNBOOK' | 'DELETE' | null>(null);
+  const [bulkActionConfirming, setBulkActionConfirming] = useState<'UNBOOK' | 'DELETE' | 'BOOK' | null>(null);
 
   // Sorter / Filter States for the Team Pitch List (underneath calendar)
   const [filterManagerOnly, setFilterManagerOnly] = useState<boolean>(!!currentUser.teamName);
@@ -349,14 +349,40 @@ export default function PitchDiary({
     const startMins = parseTimeToMinutes(slotStartStr);
     const endMins = parseTimeToMinutes(slotEndStr);
     
-    return bookings.some(b => {
-      if (b.pitchId !== pitchId || b.date !== dateStr) return false;
+    // Check bookings (same pitch or overlapping 5v5/11v11 pitches)
+    const hasBookingOverlap = bookings.some(b => {
+      const pitchMatches = b.pitchId === pitchId || 
+        ((pitchId === '5v5' && b.pitchId === '11v11') || (pitchId === '11v11' && b.pitchId === '5v5'));
+      if (!pitchMatches || b.date !== dateStr) return false;
       if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
       
       const bStart = parseTimeToMinutes(b.timeSlot);
       const bEnd = parseTimeToMinutes(b.endTime || getEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
       
       return startMins < bEnd && bStart < endMins;
+    });
+
+    if (hasBookingOverlap) return true;
+
+    // Check FA fixtures (same pitch or overlapping 5v5/11v11 pitches)
+    return faFixtures.some(f => {
+      if (f.date !== dateStr) return false;
+      const pitchMatches = f.pitchId === pitchId || 
+        ((pitchId === '5v5' && f.pitchId === '11v11') || (pitchId === '11v11' && f.pitchId === '5v5'));
+      if (!pitchMatches) return false;
+
+      // If there is already a declined or unbooked booking associated with this fixture, it's not active
+      const associatedBooking = bookings.find(
+        b => b.pitchId === f.pitchId && b.date === f.date && b.timeSlot === f.timeSlot
+      );
+      if (associatedBooking && (associatedBooking.status === BookingStatus.DECLINED || associatedBooking.status === BookingStatus.UNBOOKED)) {
+        return false;
+      }
+
+      const fStart = parseTimeToMinutes(f.timeSlot);
+      const fEnd = parseTimeToMinutes(getEndTimeForSlot(f.pitchId, f.date, f.timeSlot));
+
+      return startMins < fEnd && fStart < endMins;
     });
   };
 
@@ -1039,6 +1065,182 @@ export default function PitchDiary({
                   <Trash2 className="w-3.5 h-3.5 mr-1" />
                   Delete Selected ({selectedUnifiedIds.length})
                 </button>
+
+                {/* Option C: Schedule Selected (NEW) */}
+                <button
+                  disabled={selectedUnbookedCount === 0}
+                  onClick={() => setBulkActionConfirming('BOOK')}
+                  className={`px-4 py-2 font-black rounded-lg text-xs flex items-center space-x-1.5 shadow-sm transition-all ${
+                    selectedUnbookedCount > 0
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
+                      : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                  }`}
+                  title="Schedule and book all selected unbooked items in bulk"
+                >
+                  <CheckCircle className="w-3.5 h-3.5 mr-1" />
+                  Schedule Selected ({selectedUnbookedCount})
+                </button>
+              </div>
+            ) : bulkActionConfirming === 'BOOK' ? (
+              <div className="flex flex-col gap-3 bg-emerald-50 border border-emerald-200 p-4 rounded-xl animate-fade-in w-full">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="text-xs text-emerald-950 font-bold">
+                    ✨ Schedule and Book <span className="font-extrabold text-emerald-800">{selectedUnbookedCount}</span> selected unbooked item(s)?
+                    <p className="text-[10px] text-emerald-600 font-medium mt-0.5">This will automatically create approved pitch bookings for these matches.</p>
+                  </div>
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <button
+                      onClick={() => {
+                        const unbookedSelected = selectedItems.filter(item => !item.booking || item.booking.status === BookingStatus.UNBOOKED);
+                        
+                        // Check for clashes
+                        const clashesList: string[] = [];
+                        unbookedSelected.forEach((f) => {
+                          const fStart = parseTimeToMinutes(f.timeSlot);
+                          const fEnd = parseTimeToMinutes(getEndTimeForSlot(f.pitchId, f.date, f.timeSlot));
+
+                          // Check clash with existing bookings
+                          const hasBookingOverlap = bookings.some((b) => {
+                            if (b.date !== f.date) return false;
+                            if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+
+                            const pitchMatches = b.pitchId === f.pitchId || 
+                              ((f.pitchId === '5v5' && b.pitchId === '11v11') || (f.pitchId === '11v11' && b.pitchId === '5v5'));
+                            if (!pitchMatches) return false;
+
+                            const bStart = parseTimeToMinutes(b.timeSlot);
+                            const bEnd = parseTimeToMinutes(b.endTime || getEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+
+                            return fStart < bEnd && bStart < fEnd;
+                          });
+
+                          // Check clash with other selected to schedule
+                          const hasAssignedOverlap = unbookedSelected.some((item) => {
+                            if (item.id === f.id) return false;
+                            if (item.date !== f.date) return false;
+
+                            const pitchMatches = item.pitchId === f.pitchId ||
+                              ((f.pitchId === '5v5' && item.pitchId === '11v11') || (f.pitchId === '11v11' && item.pitchId === '5v5'));
+                            if (!pitchMatches) return false;
+
+                            const itemStart = parseTimeToMinutes(item.timeSlot);
+                            const itemEnd = parseTimeToMinutes(getEndTimeForSlot(item.pitchId, item.date, item.timeSlot));
+
+                            return fStart < itemEnd && itemStart < fEnd;
+                          });
+
+                          if (hasBookingOverlap || hasAssignedOverlap) {
+                            clashesList.push(`${f.date} @ ${f.timeSlot} (${f.title} / ${f.pitchId})`);
+                          }
+                        });
+
+                        if (clashesList.length > 0) {
+                          alert(`Error: Timing overlaps or pitch clashes detected for some of your selected items:\n\n${clashesList.join('\n')}\n\nPlease resolve these clashes before scheduling them in bulk.`);
+                          return;
+                        }
+
+                        // Proceed to book
+                        const newFaBookings: Booking[] = [];
+                        unbookedSelected.forEach((item, idx) => {
+                          if (item.type === 'FA_FIXTURE') {
+                            const fixture = faFixtures.find(f => f.id === item.id);
+                            const teamName = fixture?.scotterTeam || (item.title.includes('vs') ? item.title.split(' vs ')[0] : 'Scotter United');
+                            newFaBookings.push({
+                              id: `b-bulk-sched-${item.id}-${Date.now()}-${idx}`,
+                              pitchId: item.pitchId,
+                              date: item.date,
+                              timeSlot: item.timeSlot,
+                              teamName,
+                              managerName: currentUser.name,
+                              managerId: currentUser.id || 'admin',
+                              notes: `[FA Full-Time Match] ${item.competition || ''}: ${item.title}`,
+                              status: BookingStatus.APPROVED,
+                              createdAt: new Date().toISOString()
+                            });
+                          } else if (item.type === 'MANUAL_BOOKING' && item.booking && onUpdateBooking) {
+                            onUpdateBooking(item.booking.id, { status: BookingStatus.APPROVED });
+                          }
+                        });
+
+                        if (newFaBookings.length > 0 && onAddBookingsBulk) {
+                          onAddBookingsBulk(newFaBookings);
+                        }
+
+                        setSelectedUnifiedIds([]);
+                        setBulkActionConfirming(null);
+                      }}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg text-xs transition-colors shadow-sm cursor-pointer"
+                    >
+                      Yes, Schedule All
+                    </button>
+                    <button
+                      onClick={() => setBulkActionConfirming(null)}
+                      className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-extrabold rounded-lg text-xs transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+
+                {/* Inline validation check report */}
+                {(() => {
+                  const unbookedSelected = selectedItems.filter(item => !item.booking || item.booking.status === BookingStatus.UNBOOKED);
+                  const clashesList: string[] = [];
+                  unbookedSelected.forEach((f) => {
+                    const fStart = parseTimeToMinutes(f.timeSlot);
+                    const fEnd = parseTimeToMinutes(getEndTimeForSlot(f.pitchId, f.date, f.timeSlot));
+
+                    const hasBookingOverlap = bookings.some((b) => {
+                      if (b.date !== f.date) return false;
+                      if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+
+                      const pitchMatches = b.pitchId === f.pitchId || 
+                        ((f.pitchId === '5v5' && b.pitchId === '11v11') || (f.pitchId === '11v11' && b.pitchId === '5v5'));
+                      if (!pitchMatches) return false;
+
+                      const bStart = parseTimeToMinutes(b.timeSlot);
+                      const bEnd = parseTimeToMinutes(b.endTime || getEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+
+                      return fStart < bEnd && bStart < fEnd;
+                    });
+
+                    const hasAssignedOverlap = unbookedSelected.some((item) => {
+                      if (item.id === f.id) return false;
+                      if (item.date !== f.date) return false;
+
+                      const pitchMatches = item.pitchId === f.pitchId ||
+                        ((f.pitchId === '5v5' && item.pitchId === '11v11') || (f.pitchId === '11v11' && item.pitchId === '5v5'));
+                      if (!pitchMatches) return false;
+
+                      const itemStart = parseTimeToMinutes(item.timeSlot);
+                      const itemEnd = parseTimeToMinutes(getEndTimeForSlot(item.pitchId, item.date, item.timeSlot));
+
+                      return fStart < itemEnd && itemStart < fEnd;
+                    });
+
+                    if (hasBookingOverlap || hasAssignedOverlap) {
+                      clashesList.push(`${f.date} @ ${f.timeSlot} (${f.title} / ${f.pitchId})`);
+                    }
+                  });
+
+                  if (clashesList.length > 0) {
+                    return (
+                      <div className="mt-2 bg-rose-50 border border-rose-200 text-rose-950 p-2.5 rounded-lg text-[11px] font-bold">
+                        ⚠️ Timing / Pitch Overlaps Detected:
+                        <ul className="list-disc pl-4 mt-1 font-semibold space-y-0.5">
+                          {clashesList.map((c, idx) => <li key={idx}>{c}</li>)}
+                        </ul>
+                        <p className="mt-1 text-[10px] text-rose-600 font-medium">Please resolve these conflicts (by editing the fixture or cancelling other slots) before bulk scheduling.</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="mt-2 bg-emerald-100/50 text-emerald-800 p-2 rounded-lg text-[11px] font-bold">
+                      ✓ No timing or pitch overlaps detected. All {unbookedSelected.length} fixtures are ready to be scheduled!
+                    </div>
+                  );
+                })()}
               </div>
             ) : bulkActionConfirming === 'UNBOOK' ? (
               <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-amber-50 border border-amber-200 p-3 rounded-xl animate-fade-in w-full md:w-auto">
@@ -1255,12 +1457,17 @@ export default function PitchDiary({
                       <td className="px-5 py-4 text-right whitespace-nowrap">
                         {!isBooked ? (
                           <div className="flex items-center justify-end space-x-2">
-                            {item.booking?.status === BookingStatus.UNBOOKED && (
+                            {(item.booking?.status === BookingStatus.UNBOOKED || (currentUser.role === 'ADMIN' && item.type === 'FA_FIXTURE')) && (
                               <button
                                 onClick={() => {
-                                  onCancelBooking(item.booking!.id);
+                                  if (item.booking) {
+                                    onCancelBooking(item.booking.id);
+                                  }
+                                  if (item.type === 'FA_FIXTURE') {
+                                    onUpdateFaFixtures((prev) => prev.filter(f => f.id !== item.id));
+                                  }
                                 }}
-                                className="bg-red-50 hover:bg-red-105 text-red-700 text-xs font-bold py-1.5 px-3 rounded-lg border border-red-200 transition-colors bg-white shadow-sm"
+                                className="bg-red-50 hover:bg-red-105 text-red-700 text-xs font-bold py-1.5 px-3 rounded-lg border border-red-200 transition-colors bg-white shadow-sm cursor-pointer"
                               >
                                 Delete Fixture
                               </button>

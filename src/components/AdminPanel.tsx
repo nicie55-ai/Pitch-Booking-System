@@ -1140,14 +1140,13 @@ export default function AdminPanel({
 
   // Paste Fixtures parser & helpers
   function optimizeFixturesSlots(fixtures: FAFixture[]): FAFixture[] {
-    const groups: Record<string, FAFixture[]> = {};
+    const datesGroup: Record<string, FAFixture[]> = {};
     
     fixtures.forEach(f => {
       const isHome = f.homeTeam.toLowerCase().includes('scotter');
       if (isHome) {
-        const key = `${f.date}_${f.pitchId}`;
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(f);
+        if (!datesGroup[f.date]) datesGroup[f.date] = [];
+        datesGroup[f.date].push(f);
       }
     });
 
@@ -1158,51 +1157,83 @@ export default function AdminPanel({
       '11v11': ['10:00', '12:00', '14:00', '16:00'],
     };
 
+    const pitchPriority: Record<string, number> = {
+      '11v11': 1,
+      '9v9': 2,
+      '7v7': 3,
+      '5v5': 4,
+    };
+
     const optimizedMap = new Map<string, string>();
 
-    Object.entries(groups).forEach(([key, groupFixtures]) => {
-      const parts = key.split('_');
-      const date = parts[0];
-      const pitchId = parts[1] as PitchSize;
-      const slots = pitchSlots[pitchId] || ['09:30', '10:45', '12:00'];
-      
-      // Filter out slots that clash with existing approved/pending diary bookings on this pitch
-      const isSlotClashingWithBookings = (slotStr: string): boolean => {
-        const startMins = parseTimeToMinutes(slotStr);
-        const endMins = parseTimeToMinutes(getAdminEndTimeForSlot(pitchId, date, slotStr));
-        
-        return bookings.some((b) => {
-          if (b.pitchId !== pitchId || b.date !== date) return false;
-          if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
-          
-          const bStart = parseTimeToMinutes(b.timeSlot);
-          const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
-          
-          return startMins < bEnd && bStart < endMins;
-        });
-      };
-
-      const vacantSlots = slots.filter(s => !isSlotClashingWithBookings(s));
-
-      const sorted = [...groupFixtures].sort((a, b) => {
+    Object.entries(datesGroup).forEach(([date, dateFixtures]) => {
+      // Sort fixtures so more constrained pitch sizes are optimized first
+      const sortedFixtures = [...dateFixtures].sort((a, b) => {
+        const priorityA = pitchPriority[a.pitchId] || 99;
+        const priorityB = pitchPriority[b.pitchId] || 99;
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB;
+        }
         const timeCompare = a.timeSlot.localeCompare(b.timeSlot);
         if (timeCompare !== 0) return timeCompare;
         return a.id.localeCompare(b.id);
       });
-      
-      sorted.forEach((f, idx) => {
-        // Assign vacant slots first, then fallback to standard slots to suggest better options
+
+      const assigned: Array<{ pitchId: PitchSize; slot: string }> = [];
+
+      sortedFixtures.forEach((f) => {
+        const slots = pitchSlots[f.pitchId] || ['09:30', '10:45', '12:00'];
+
+        // Filter slots to only those that do not clash with existing bookings OR with already assigned slots on this date
+        const vacantSlots = slots.filter((slotStr) => {
+          const startMins = parseTimeToMinutes(slotStr);
+          const endMins = parseTimeToMinutes(getAdminEndTimeForSlot(f.pitchId, date, slotStr));
+
+          // 1. Check against existing approved/pending bookings
+          const hasBookingOverlap = bookings.some((b) => {
+            if (b.date !== date) return false;
+            if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+
+            const pitchMatches = b.pitchId === f.pitchId || 
+              (rules.prevent5v5_11v11Overlap && ((f.pitchId === '5v5' && b.pitchId === '11v11') || (f.pitchId === '11v11' && b.pitchId === '5v5')));
+            if (!pitchMatches) return false;
+
+            const bStart = parseTimeToMinutes(b.timeSlot);
+            const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+
+            return startMins < bEnd && bStart < endMins;
+          });
+
+          if (hasBookingOverlap) return false;
+
+          // 2. Check against already assigned slots in this batch
+          const hasAssignedOverlap = assigned.some((item) => {
+            const pitchMatches = item.pitchId === f.pitchId ||
+              (rules.prevent5v5_11v11Overlap && ((f.pitchId === '5v5' && item.pitchId === '11v11') || (f.pitchId === '11v11' && item.pitchId === '5v5')));
+            if (!pitchMatches) return false;
+
+            const itemStart = parseTimeToMinutes(item.slot);
+            const itemEnd = parseTimeToMinutes(getAdminEndTimeForSlot(item.pitchId, date, item.slot));
+
+            return startMins < itemEnd && itemStart < endMins;
+          });
+
+          return !hasAssignedOverlap;
+        });
+
+        // Choose the target slot
         let targetSlot = '';
-        if (vacantSlots.length > idx) {
-          targetSlot = vacantSlots[idx];
+        if (vacantSlots.includes(f.timeSlot)) {
+          targetSlot = f.timeSlot;
+        } else if (vacantSlots.length > 0) {
+          targetSlot = vacantSlots[0];
         } else {
-          const remainingSlots = slots.filter(s => !vacantSlots.includes(s));
-          if (remainingSlots.length > 0) {
-            targetSlot = remainingSlots[(idx - vacantSlots.length) % remainingSlots.length];
-          } else {
-            targetSlot = slots[idx % slots.length];
-          }
+          // Fallback if no vacant slot
+          const samePitchAssignedCount = assigned.filter(item => item.pitchId === f.pitchId).length;
+          targetSlot = slots[samePitchAssignedCount % slots.length];
         }
+
+        assigned.push({ pitchId: f.pitchId, slot: targetSlot });
         optimizedMap.set(f.id, targetSlot);
       });
     });
@@ -1641,6 +1672,37 @@ export default function AdminPanel({
     }
 
     // Check for clashes on unbooked home matches only using precise interval overlap detection
+    // First, check for mutual overlaps/clashes among the selected home matches themselves
+    const mutualClashing: FAFixture[] = [];
+    for (let i = 0; i < newHomeMatchesToBook.length; i++) {
+      const f1 = newHomeMatchesToBook[i];
+      const f1Start = parseTimeToMinutes(f1.timeSlot);
+      const f1End = parseTimeToMinutes(getAdminEndTimeForSlot(f1.pitchId, f1.date, f1.timeSlot));
+
+      for (let j = i + 1; j < newHomeMatchesToBook.length; j++) {
+        const f2 = newHomeMatchesToBook[j];
+        if (f1.date !== f2.date) continue;
+
+        const pitchMatches = f1.pitchId === f2.pitchId ||
+          (rules.prevent5v5_11v11Overlap && ((f1.pitchId === '5v5' && f2.pitchId === '11v11') || (f1.pitchId === '11v11' && f2.pitchId === '5v5')));
+        if (!pitchMatches) continue;
+
+        const f2Start = parseTimeToMinutes(f2.timeSlot);
+        const f2End = parseTimeToMinutes(getAdminEndTimeForSlot(f2.pitchId, f2.date, f2.timeSlot));
+
+        if (f1Start < f2End && f2Start < f1End) {
+          if (!mutualClashing.includes(f1)) mutualClashing.push(f1);
+          if (!mutualClashing.includes(f2)) mutualClashing.push(f2);
+        }
+      }
+    }
+
+    if (mutualClashing.length > 0) {
+      const clashList = mutualClashing.map(f => `${f.date} @ ${f.timeSlot} (${f.scotterTeam} / ${f.pitchId})`).join(', ');
+      setImportFeedback(`Error: Mutual overlaps detected within your selected import list (${clashList}). Under current rules, 5v5 and 11v11 (or identical pitches) cannot be scheduled at overlapping times on the same date. Please adjust their times or pitches before importing.`);
+      return;
+    }
+
     const clashingSelected = newHomeMatchesToBook.filter((f) => {
       const fStart = parseTimeToMinutes(f.timeSlot);
       const fEnd = parseTimeToMinutes(getAdminEndTimeForSlot(f.pitchId, f.date, f.timeSlot));

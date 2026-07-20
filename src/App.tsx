@@ -581,6 +581,7 @@ export default function App() {
             pitches={pitchConfigs}
             existingBookings={bookings}
             currentUser={currentUser}
+            faFixtures={faFixtures}
           />
         )}
       </AnimatePresence>

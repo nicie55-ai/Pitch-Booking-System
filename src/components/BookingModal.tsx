@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { X, Calendar, Clock, MapPin, Clipboard, FileText, AlertTriangle } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, User } from '../types';
-import { SCOTTER_TEAMS } from '../mockData';
+import { SCOTTER_TEAMS, FAFixture } from '../mockData';
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -29,6 +29,7 @@ interface BookingModalProps {
   pitches: Array<{ id: PitchSize; name: string; defaultSlots: string[] }>;
   existingBookings: Booking[];
   currentUser: User;
+  faFixtures?: FAFixture[];
 }
 
 export default function BookingModal({
@@ -43,6 +44,7 @@ export default function BookingModal({
   pitches,
   existingBookings,
   currentUser,
+  faFixtures,
 }: BookingModalProps) {
   const [pitchId, setPitchId] = useState<PitchSize>(selectedPitchId);
   const [date, setDate] = useState<string>(selectedDate);
@@ -54,6 +56,7 @@ export default function BookingModal({
   const [isCustomTime, setIsCustomTime] = useState<boolean>(false);
   const [bookingType, setBookingType] = useState<'STANDARD' | 'MATCH'>('STANDARD');
   const [confirmDoubleBooking, setConfirmDoubleBooking] = useState<boolean>(false);
+  const [confirmNoticeWarning, setConfirmNoticeWarning] = useState<boolean>(false);
 
   const parseTimeToMinutes = (t: string): number => {
     if (!t) return 0;
@@ -98,6 +101,7 @@ export default function BookingModal({
   useEffect(() => {
     if (isOpen) {
       setConfirmDoubleBooking(false);
+      setConfirmNoticeWarning(false);
       if (selectedBookingId) {
         const existing = existingBookings.find((b) => b.id === selectedBookingId);
         if (existing) {
@@ -179,7 +183,7 @@ export default function BookingModal({
       const slotStart = parseTimeToMinutes(slot);
       const slotEnd = parseTimeToMinutes(getEndTimeForSlot(pitchId, date, slot, bookingType));
 
-      const hasClash = existingBookings.some((b) => {
+      let hasClash = existingBookings.some((b) => {
         if (b.id === selectedBookingId || b.date !== date) return false;
         
         const pitchMatches = b.pitchId === pitchId || 
@@ -193,6 +197,28 @@ export default function BookingModal({
 
         return slotStart < bEnd && bStart < slotEnd;
       });
+
+      if (!hasClash && faFixtures) {
+        hasClash = faFixtures.some((f) => {
+          if (f.date !== date) return false;
+          
+          const pitchMatches = f.pitchId === pitchId || 
+            ((pitchId === '5v5' && f.pitchId === '11v11') || (pitchId === '11v11' && f.pitchId === '5v5'));
+          if (!pitchMatches) return false;
+
+          const associatedBooking = existingBookings.find(
+            b => b.pitchId === f.pitchId && b.date === f.date && b.timeSlot === f.timeSlot
+          );
+          if (associatedBooking && (associatedBooking.status === BookingStatus.DECLINED || associatedBooking.status === BookingStatus.UNBOOKED)) {
+            return false;
+          }
+
+          const fStart = parseTimeToMinutes(f.timeSlot);
+          const fEnd = parseTimeToMinutes(getEndTimeForSlot(f.pitchId, f.date, f.timeSlot, 'MATCH'));
+
+          return slotStart < fEnd && fStart < slotEnd;
+        });
+      }
 
       return !hasClash;
     });
@@ -226,7 +252,7 @@ export default function BookingModal({
         const slotStart = parseTimeToMinutes(slot);
         const slotEnd = parseTimeToMinutes(getEndTimeForSlot(selected, date, slot, bookingType));
 
-        const hasClash = existingBookings.some((b) => {
+        let hasClash = existingBookings.some((b) => {
           if (b.id === selectedBookingId || b.date !== date) return false;
           
           const pitchMatches = b.pitchId === selected || 
@@ -240,6 +266,28 @@ export default function BookingModal({
 
           return slotStart < bEnd && bStart < slotEnd;
         });
+
+        if (!hasClash && faFixtures) {
+          hasClash = faFixtures.some((f) => {
+            if (f.date !== date) return false;
+            
+            const pitchMatches = f.pitchId === selected || 
+              ((selected === '5v5' && f.pitchId === '11v11') || (selected === '11v11' && f.pitchId === '5v5'));
+            if (!pitchMatches) return false;
+
+            const associatedBooking = existingBookings.find(
+              b => b.pitchId === f.pitchId && b.date === f.date && b.timeSlot === f.timeSlot
+            );
+            if (associatedBooking && (associatedBooking.status === BookingStatus.DECLINED || associatedBooking.status === BookingStatus.UNBOOKED)) {
+              return false;
+            }
+
+            const fStart = parseTimeToMinutes(f.timeSlot);
+            const fEnd = parseTimeToMinutes(getEndTimeForSlot(f.pitchId, f.date, f.timeSlot, 'MATCH'));
+
+            return slotStart < fEnd && fStart < slotEnd;
+          });
+        }
 
         return !hasClash;
       });
@@ -299,6 +347,26 @@ export default function BookingModal({
       return;
     }
 
+    const now = new Date();
+    const slotDateTime = new Date(`${date}T${timeSlot}`);
+    if (isNaN(slotDateTime.getTime())) {
+      setError('Please provide a valid date and time slot.');
+      return;
+    }
+    if (slotDateTime < now) {
+      setError('Cannot book a slot in the past. Please select a future date and time.');
+      return;
+    }
+
+    const diffMs = slotDateTime.getTime() - now.getTime();
+    const diffHours = diffMs / (1000 * 60 * 60);
+    const isShortNotice = currentUser.role === 'MANAGER' && diffHours > 0 && diffHours < 24;
+
+    if (isShortNotice && !confirmNoticeWarning) {
+      setError('Warning: You are requesting this slot with less than 24 hours notice. You need to ask a member of the exec team to approve it. Please check the confirmation box below to submit.');
+      return;
+    }
+
     // Check if there's already an approved or pending booking for this pitch, date, and slot
     const clash = existingBookings.find((b) => {
       if (b.id === selectedBookingId || b.date !== date) return false;
@@ -321,6 +389,35 @@ export default function BookingModal({
         `This slot overlaps with a session ${statusText} by ${clash.teamName} (${clash.managerName}) from ${clash.timeSlot} to ${clash.endTime || getEndTimeForSlot(clash.pitchId, clash.date, clash.timeSlot)}. Please select another time or pitch.`
       );
       return;
+    }
+
+    if (faFixtures) {
+      const clashFixture = faFixtures.find((f) => {
+        if (f.date !== date) return false;
+        
+        const pitchMatches = f.pitchId === pitchId || 
+          ((pitchId === '5v5' && f.pitchId === '11v11') || (pitchId === '11v11' && f.pitchId === '5v5'));
+        if (!pitchMatches) return false;
+
+        const associatedBooking = existingBookings.find(
+          b => b.pitchId === f.pitchId && b.date === f.date && b.timeSlot === f.timeSlot
+        );
+        if (associatedBooking && (associatedBooking.status === BookingStatus.DECLINED || associatedBooking.status === BookingStatus.UNBOOKED)) {
+          return false;
+        }
+
+        const fStart = parseTimeToMinutes(f.timeSlot);
+        const fEnd = parseTimeToMinutes(getEndTimeForSlot(f.pitchId, f.date, f.timeSlot, 'MATCH'));
+
+        return startMins < fEnd && fStart < endMins;
+      });
+
+      if (clashFixture) {
+        setError(
+          `This slot overlaps with a scheduled FA fixture: ${clashFixture.homeTeam} vs ${clashFixture.awayTeam} on the ${clashFixture.pitchId} pitch at ${clashFixture.timeSlot}. Please select another time or pitch.`
+        );
+        return;
+      }
     }
 
     // Raise an issue if same team already booked on same date
@@ -578,6 +675,42 @@ export default function BookingModal({
               className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg p-3 text-slate-700 text-sm focus:border-blue-900 focus:outline-none transition-colors placeholder:text-slate-400"
             />
           </div>
+
+          {/* Short Notice Warning */}
+          {(() => {
+            if (currentUser.role !== 'MANAGER' || !date || !timeSlot) return null;
+            const now = new Date();
+            const slotDateTime = new Date(`${date}T${timeSlot}`);
+            if (isNaN(slotDateTime.getTime())) return null;
+            const diffMs = slotDateTime.getTime() - now.getTime();
+            const diffHours = diffMs / (1000 * 60 * 60);
+            const isShortNotice = diffHours > 0 && diffHours < 24;
+
+            if (!isShortNotice) return null;
+
+            return (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3.5 space-y-2.5">
+                <div className="flex items-start space-x-2">
+                  <AlertTriangle className="w-4.5 h-4.5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-900 uppercase tracking-wide">Short Notice Booking Request</h4>
+                    <p className="text-[11px] text-amber-700 leading-normal mt-0.5">
+                      You are requesting a slot with less than 24 hours notice. Under club guidelines, you must contact a member of the executive team directly to obtain approval for this booking.
+                    </p>
+                  </div>
+                </div>
+                <label className="flex items-center space-x-2.5 font-bold text-xs text-amber-950 mt-1 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={confirmNoticeWarning}
+                    onChange={(e) => setConfirmNoticeWarning(e.target.checked)}
+                    className="rounded border-amber-300 text-amber-600 focus:ring-amber-500 w-4 h-4"
+                  />
+                  <span>I understand and will ask a member of the exec team to approve this</span>
+                </label>
+              </div>
+            );
+          })()}
 
           {/* Double Booking Warning Checklist */}
           {(() => {
