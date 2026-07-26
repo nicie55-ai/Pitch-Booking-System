@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type PitchSize = '5v5' | '7v7' | '9v9' | '11v11';
+export type PitchSize = '3v3' | '5v5' | '7v7' | '9v9' | '11v11';
 
 export enum BookingStatus {
   PENDING = 'PENDING',
@@ -58,4 +58,11 @@ export interface User {
   password?: string;
   googleLinked?: boolean;
   googleEmail?: string;
+}
+
+export interface ClubTeam {
+  id: string;
+  name: string;
+  category: string;
+  pitchSize: PitchSize;
 }

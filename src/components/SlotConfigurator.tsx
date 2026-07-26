@@ -74,10 +74,8 @@ export default function SlotConfigurator({
 
   // Remove a slot as Admin
   const handleAdminRemoveSlot = (slotToRemove: string) => {
-    if (confirm(`Are you sure you want to remove the standard slot ${slotToRemove} for ${activeConfig.name}?`)) {
-      const updatedSlots = activeConfig.defaultSlots.filter((s) => s !== slotToRemove);
-      onUpdatePitchSlots(selectedPitchId, updatedSlots);
-    }
+    const updatedSlots = activeConfig.defaultSlots.filter((s) => s !== slotToRemove);
+    onUpdatePitchSlots(selectedPitchId, updatedSlots);
   };
 
   // Submit Slot Change Request as Manager
@@ -140,7 +138,7 @@ export default function SlotConfigurator({
           Select a pitch format below to view, update, or request changes to standard kick-off slots.
         </p>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mt-6">
           {pitchConfigs.map((p) => {
             const isSelected = p.id === selectedPitchId;
             return (

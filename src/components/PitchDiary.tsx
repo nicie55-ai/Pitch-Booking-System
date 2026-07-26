@@ -20,7 +20,8 @@ import {
   Filter,
   BookOpen,
   Search,
-  Trash2
+  Trash2,
+  MapPin
 } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, PitchConfig, User as UserType } from '../types';
 import AdminPanel from './AdminPanel';
@@ -33,7 +34,7 @@ interface PitchDiaryProps {
   pitchConfigs: PitchConfig[];
   bookings: Booking[];
   currentUser: UserType;
-  onRequestBooking: (pitchId: PitchSize, slot: string, notes?: string, date?: string, existingBookingId?: string) => void;
+  onRequestBooking: (pitchId: PitchSize, slot: string, notes?: string, date?: string, existingBookingId?: string, fixtureId?: string) => void;
   onApproveBooking: (id: string) => void;
   onDeclineBooking: (id: string, reason: string) => void;
   onCancelBooking: (id: string) => void;
@@ -43,6 +44,7 @@ interface PitchDiaryProps {
   onUpdateUsers?: (newUsers: UserType[]) => void;
   faFixtures: FAFixture[];
   onUpdateFaFixtures: (fixtures: FAFixture[] | ((prev: FAFixture[]) => FAFixture[])) => void;
+  onClearAllBookings?: () => void;
 }
 
 export default function PitchDiary({
@@ -61,6 +63,7 @@ export default function PitchDiary({
   onUpdateUsers,
   faFixtures,
   onUpdateFaFixtures,
+  onClearAllBookings,
 }: PitchDiaryProps) {
   // Decline active states for specific booking IDs (to show decline text area)
   const [decliningId, setDecliningId] = useState<string | null>(null);
@@ -314,6 +317,12 @@ export default function PitchDiary({
   };
 
   const WEEKEND_PREBOOKED_BLOCKS: Record<string, Array<{ start: string; end: string }>> = {
+    '3v3': [
+      { start: '09:00', end: '10:00' },
+      { start: '10:00', end: '11:00' },
+      { start: '11:00', end: '12:00' },
+      { start: '12:00', end: '13:00' },
+    ],
     '5v5': [
       { start: '09:45', end: '10:45' },
       { start: '10:45', end: '11:45' },
@@ -338,6 +347,11 @@ export default function PitchDiary({
   const getStandardSlotsForDate = (pitchId: string, dateStr: string): Array<{ start: string; end: string }> => {
     const d = new Date(dateStr);
     const day = d.getDay();
+    if (day === 0) { // Sunday
+      if (pitchId === '5v5' || pitchId === '7v7') {
+        return [];
+      }
+    }
     const isWeekend = day === 0 || day === 6;
     if (isWeekend) {
       return WEEKEND_PREBOOKED_BLOCKS[pitchId] || [];
@@ -393,6 +407,24 @@ export default function PitchDiary({
 
   return (
     <div className="space-y-8">
+      {/* Location Notice Banner */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-100 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row items-center sm:justify-between gap-4">
+        <div className="flex items-center space-x-3 text-left">
+          <div className="bg-blue-900 text-white p-2.5 rounded-xl shadow-md">
+            <MapPin className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-xs font-black text-blue-950 uppercase tracking-wider">War Memorial Playing Fields</h3>
+            <p className="text-xs text-slate-600 font-semibold mt-0.5">
+              This system only lists and schedules bookings for the pitches located at <span className="text-blue-900 font-bold">War Memorial Playing Fields, Scotter</span>.
+            </p>
+          </div>
+        </div>
+        <div className="bg-white/85 border border-blue-200/50 px-3 py-1.5 rounded-lg text-[11px] font-bold text-blue-950 uppercase tracking-wide whitespace-nowrap shadow-sm">
+          📍 Facility: Scotter (DN21 3RL)
+        </div>
+      </div>
+
       {/* Club & Admin Fixtures Sync Hub */}
       {currentUser.role === 'ADMIN' && onAddBookingsBulk && (
         <AdminPanel
@@ -408,6 +440,7 @@ export default function PitchDiary({
           onUpdateUsers={onUpdateUsers}
           faFixtures={faFixtures}
           onUpdateFaFixtures={onUpdateFaFixtures}
+          onClearAllBookings={onClearAllBookings}
         />
       )}
 
@@ -577,7 +610,10 @@ export default function PitchDiary({
               <div className="w-24 sm:w-28 flex-shrink-0 py-4 px-3 text-center text-xs font-bold text-blue-950 uppercase tracking-wider border-r border-slate-200 flex items-center justify-center">
                 KO Time
               </div>
-              <div className="flex-1 grid grid-cols-4 divide-x divide-slate-200">
+              <div 
+                className="flex-1 grid divide-x divide-slate-200"
+                style={{ gridTemplateColumns: `repeat(${pitchConfigs.length}, minmax(0, 1fr))` }}
+              >
                 {pitchConfigs.map((pitch) => {
                   const formatMatch = pitch.name.match(/(\d+v\d+)/i);
                   const cleanName = formatMatch ? formatMatch[1].toUpperCase() : pitch.name;
@@ -618,7 +654,10 @@ export default function PitchDiary({
               </div>
 
               {/* Pitch Columns Container */}
-              <div className="flex-1 grid grid-cols-4 relative divide-x divide-slate-200 bg-white">
+              <div 
+                className="flex-1 grid relative divide-x divide-slate-200 bg-white"
+                style={{ gridTemplateColumns: `repeat(${pitchConfigs.length}, minmax(0, 1fr))` }}
+              >
                 {pitchConfigs.map((pitch) => {
                   // Get bookings for this pitch and date
                   const activeBookings = bookings.filter(
@@ -690,7 +729,7 @@ export default function PitchDiary({
                               className="bg-blue-900 hover:bg-blue-800 text-white text-[10px] font-extrabold py-1 px-2.5 rounded-lg shadow-sm transition-all flex items-center justify-center space-x-1"
                             >
                               <PlusCircle className="w-3 h-3" />
-                              <span>Book Block</span>
+                              <span>Book Slot</span>
                             </button>
                           </div>
                         );
@@ -1482,7 +1521,8 @@ export default function PitchDiary({
                                   item.timeSlot,
                                   defaultNotes,
                                   item.date,
-                                  item.booking?.id
+                                  item.booking?.id,
+                                  item.type === 'FA_FIXTURE' ? item.id : undefined
                                 );
                               }}
                               className="bg-blue-900 hover:bg-blue-800 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm transition-colors"

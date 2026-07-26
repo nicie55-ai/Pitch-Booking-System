@@ -1,0 +1,100 @@
+{
+  "entities": {
+    "users": {
+      "title": "Users / Coaches",
+      "description": "User accounts including admins and team managers/coaches",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "MANAGER"] },
+        "teamName": { "type": "string" },
+        "password": { "type": "string" },
+        "googleLinked": { "type": "boolean" },
+        "googleEmail": { "type": "string" }
+      },
+      "required": ["id", "name", "role"]
+    },
+    "bookings": {
+      "title": "Pitch Bookings",
+      "description": "Pitch reservations for matches and training",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "pitchId": { "type": "string" },
+        "date": { "type": "string" },
+        "timeSlot": { "type": "string" },
+        "teamName": { "type": "string" },
+        "managerName": { "type": "string" },
+        "managerId": { "type": "string" },
+        "notes": { "type": "string" },
+        "status": { "type": "string" },
+        "declineReason": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "endTime": { "type": "string" },
+        "bookingType": { "type": "string" }
+      },
+      "required": ["id", "pitchId", "date", "timeSlot", "teamName", "managerName", "status"]
+    },
+    "faFixtures": {
+      "title": "FA Full-Time Fixtures",
+      "description": "Scheduled league and cup fixtures imported from FA Full-Time",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "timeSlot": { "type": "string" },
+        "pitchId": { "type": "string" },
+        "homeTeam": { "type": "string" },
+        "awayTeam": { "type": "string" },
+        "competition": { "type": "string" },
+        "scotterTeam": { "type": "string" }
+      },
+      "required": ["id", "date", "timeSlot", "pitchId", "homeTeam", "awayTeam"]
+    },
+    "pitchConfigs": {
+      "title": "Pitch Configurations",
+      "description": "Pitch formats and default time slots",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "defaultSlots": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["id", "name", "defaultSlots"]
+    },
+    "slotChangeRequests": {
+      "title": "Slot Change Requests",
+      "description": "Requests made by coaches/managers to adjust pitch slots",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "managerId": { "type": "string" },
+        "managerName": { "type": "string" },
+        "teamName": { "type": "string" },
+        "pitchId": { "type": "string" },
+        "actionType": { "type": "string" },
+        "targetSlot": { "type": "string" },
+        "newSlotTime": { "type": "string" },
+        "notes": { "type": "string" },
+        "status": { "type": "string" },
+        "declineReason": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "managerName", "status"]
+    },
+    "teams": {
+      "title": "Club Teams",
+      "description": "List of Scotter United JFC teams, age categories, and pitch sizes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "pitchSize": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "pitchSize"]
+    }
+  }
+}

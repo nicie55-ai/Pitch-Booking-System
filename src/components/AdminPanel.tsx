@@ -22,6 +22,7 @@ import {
   Sparkles,
   Info,
   Trash2,
+  X,
   HelpCircle,
   Wand2,
   CheckCircle,
@@ -34,8 +35,8 @@ import {
   Shield,
   Lock
 } from 'lucide-react';
-import { PitchSize, Booking, BookingStatus, PitchConfig, User } from '../types';
-import { SCOTTER_TEAMS, MOCK_FA_FULLTIME_FIXTURES, FAFixture, ClubTeam } from '../mockData';
+import { PitchSize, Booking, BookingStatus, PitchConfig, User, ClubTeam } from '../types';
+import { SCOTTER_TEAMS, MOCK_FA_FULLTIME_FIXTURES, FAFixture } from '../mockData';
 import { canManagerUnbook, isTeamMatch } from '../utils/bookingUtils';
 
 // --- Top-Level Stateless Helpers (Hoisted and safe from Temporal Dead Zone) ---
@@ -226,11 +227,12 @@ interface AdminPanelProps {
   onCancelBooking: (id: string) => void;
   onUpdateBooking?: (id: string, fields: Partial<Booking>) => void;
   currentUser: User;
-  onRequestBooking?: (pitchId: PitchSize, slot: string, notes?: string, date?: string, existingBookingId?: string) => void;
+  onRequestBooking?: (pitchId: PitchSize, slot: string, notes?: string, date?: string, existingBookingId?: string, fixtureId?: string) => void;
   users?: User[];
   onUpdateUsers?: (newUsers: User[]) => void;
   faFixtures: FAFixture[];
-  onUpdateFaFixtures: (fixtures: FAFixture[]) => void;
+  onUpdateFaFixtures: (fixtures: FAFixture[] | ((prev: FAFixture[]) => FAFixture[])) => void;
+  onClearAllBookings?: () => void;
 }
 
 export default function AdminPanel({
@@ -246,6 +248,7 @@ export default function AdminPanel({
   onUpdateUsers,
   faFixtures,
   onUpdateFaFixtures,
+  onClearAllBookings,
 }: AdminPanelProps) {
   // Extract Home and Away team names from booking notes or fallback to teamName
   const getHomeAndAwayForBooking = (b: Booking): { homeTeam: string; awayTeam: string } => {
@@ -279,68 +282,6 @@ export default function AdminPanel({
     maxHomeGamesPerWeek: true,
     fairDistributionOfKickoffs: true,
   });
-
-  const [aiPolicyPrompt, setAiPolicyPrompt] = useState('');
-  const [aiPolicyStatus, setAiPolicyStatus] = useState<{
-    success: boolean;
-    message: string;
-    changes: string[];
-  } | null>(null);
-
-  const handleApplyAiPolicy = (prompt: string) => {
-    if (!prompt.trim()) return;
-    const lower = prompt.toLowerCase();
-    const updatedRules = { ...rules };
-    const changeLogs: string[] = [];
-
-    // Check for overlap rule changes
-    if (lower.includes('overlap') || lower.includes('5v5') || lower.includes('11v11')) {
-      if (lower.includes('disable') || lower.includes('off') || lower.includes('stop') || lower.includes('remove') || lower.includes('no prevent')) {
-        updatedRules.prevent5v5_11v11Overlap = false;
-        changeLogs.push('5v5 & 11v11 Overlap Prevention: DISABLED ❌');
-      } else if (lower.includes('enable') || lower.includes('on') || lower.includes('activate') || lower.includes('prevent')) {
-        updatedRules.prevent5v5_11v11Overlap = true;
-        changeLogs.push('5v5 & 11v11 Overlap Prevention: ENABLED ✅');
-      }
-    }
-
-    // Check for home match warnings
-    if (lower.includes('home') || lower.includes('limit') || lower.includes('warning') || lower.includes('max home')) {
-      if (lower.includes('disable') || lower.includes('off') || lower.includes('stop') || lower.includes('remove') || lower.includes('no warn')) {
-        updatedRules.maxHomeGamesPerWeek = false;
-        changeLogs.push('Weekly Home Match Warning: DISABLED ❌');
-      } else if (lower.includes('enable') || lower.includes('on') || lower.includes('activate') || lower.includes('warn')) {
-        updatedRules.maxHomeGamesPerWeek = true;
-        changeLogs.push('Weekly Home Match Warning: ENABLED ✅');
-      }
-    }
-
-    // Check for fair kickoff distribution policy
-    if (lower.includes('fair') || lower.includes('distribut') || lower.includes('even') || lower.includes('kickoff') || lower.includes('kick-off') || lower.includes('early')) {
-      if (lower.includes('disable') || lower.includes('off') || lower.includes('stop') || lower.includes('remove')) {
-        updatedRules.fairDistributionOfKickoffs = false;
-        changeLogs.push('Fair Fixture Distribution Policy: DISABLED ❌');
-      } else if (lower.includes('enable') || lower.includes('on') || lower.includes('activate') || lower.includes('spread') || lower.includes('fair')) {
-        updatedRules.fairDistributionOfKickoffs = true;
-        changeLogs.push('Fair Fixture Distribution Policy: ENABLED ✅');
-      }
-    }
-
-    if (changeLogs.length > 0) {
-      setRules(updatedRules as any);
-      setAiPolicyStatus({
-        success: true,
-        message: `System Policy AI has processed your instructions: "${prompt}"`,
-        changes: changeLogs,
-      });
-    } else {
-      setAiPolicyStatus({
-        success: false,
-        message: `I analyzed your instruction "${prompt}" but couldn't map it to any standard constraints. Try terms like "overlap", "home games", "fair kickoff", or specify "enable"/"disable".`,
-        changes: [],
-      });
-    }
-  };
 
   const [customRules, setCustomRules] = useState<string[]>([
     "Junior matches (U11 and under) have priority scheduling for Saturday morning slots before 11:30.",
@@ -917,9 +858,12 @@ export default function AdminPanel({
       return f;
     }));
 
-    // Find if there is an approved diary booking that corresponds to this fixture BEFORE the update.
+    // Find if there is a diary booking that corresponds to this fixture BEFORE or AFTER the update.
     const relatedBooking = bookings.find(b => {
-      if (b.status !== BookingStatus.APPROVED) return false;
+      if (b.status === BookingStatus.DECLINED) return false;
+      
+      const isExactOldSlot = b.pitchId === prevFixture.pitchId && b.date === prevFixture.date && b.timeSlot === prevFixture.timeSlot;
+      const isExactNewSlot = b.pitchId === newPitch && b.date === newDate && b.timeSlot === newTime;
       
       const isSameTeam =
         b.teamName.toLowerCase().trim() === prevFixture.scotterTeam.toLowerCase().trim() ||
@@ -931,7 +875,7 @@ export default function AdminPanel({
         b.notes.toLowerCase().includes(prevFixture.awayTeam.toLowerCase())
       );
       
-      return isSameTeam && (b.date === prevFixture.date || hasFixtureNotes);
+      return isExactOldSlot || isExactNewSlot || (isSameTeam && (b.date === prevFixture.date || hasFixtureNotes));
     });
 
     if (relatedBooking && onUpdateBooking) {
@@ -939,11 +883,27 @@ export default function AdminPanel({
         date: newDate,
         pitchId: newPitch,
         timeSlot: newTime,
-        notes: `[FA Full-Time Rearranged] ${prevFixture.competition}: ${prevFixture.homeTeam} vs ${prevFixture.awayTeam} (Rearranged to ${newTime} on ${newDate})`
+        status: BookingStatus.APPROVED,
+        notes: `[FA Full-Time Match] ${prevFixture.competition}: ${prevFixture.homeTeam} vs ${prevFixture.awayTeam}`
       });
-      setImportFeedback(`Successfully rearranged "${prevFixture.homeTeam} vs ${prevFixture.awayTeam}" to ${newDate} ${newTime} on ${newPitch} and updated its active diary booking!`);
+      setImportFeedback(`Successfully rearranged "${prevFixture.homeTeam} vs ${prevFixture.awayTeam}" to ${newDate} ${newTime} on ${newPitch} and updated pitch booking!`);
     } else {
-      setImportFeedback(`Successfully rearranged "${prevFixture.homeTeam} vs ${prevFixture.awayTeam}" to ${newDate} ${newTime} on ${newPitch}!`);
+      const newBooking: Booking = {
+        id: `b-fa-${fixtureId}-${Date.now()}`,
+        pitchId: newPitch,
+        date: newDate,
+        timeSlot: newTime,
+        teamName: prevFixture.scotterTeam,
+        managerName: currentUser.name,
+        managerId: currentUser.id || 'admin',
+        notes: `[FA Full-Time Match] ${prevFixture.competition}: ${prevFixture.homeTeam} vs ${prevFixture.awayTeam}`,
+        status: BookingStatus.APPROVED,
+        createdAt: new Date().toISOString(),
+      };
+      if (onAddBookingsBulk) {
+        onAddBookingsBulk([newBooking]);
+      }
+      setImportFeedback(`Successfully rearranged "${prevFixture.homeTeam} vs ${prevFixture.awayTeam}" to ${newDate} ${newTime} on ${newPitch} and booked pitch!`);
     }
 
     setResolvingClashId(null);
@@ -1055,8 +1015,8 @@ export default function AdminPanel({
 
   // Bulk unbook selected booked FA fixtures
   const handleBulkUnbookFixtures = () => {
-    const selectedBooked = filteredFixtures.filter(
-      (f) => selectedFixtureIds.includes(f.id) && getFixtureStatus(f).type === 'BOOKED_SELF'
+    const selectedBooked = loadedFixtures.filter(
+      (f) => selectedFixtureIds.includes(f.id) && getFixtureStatus(f).booking !== undefined
     );
 
     if (selectedBooked.length === 0) {
@@ -1130,11 +1090,9 @@ export default function AdminPanel({
       alert('You cannot delete your own logged-in admin account!');
       return;
     }
-    if (confirm('Are you sure you want to delete this coach account?')) {
-      if (onUpdateUsers) {
-        onUpdateUsers(users.filter((u) => u.id !== id));
-        setCoachSuccess('Coach account successfully deleted.');
-      }
+    if (onUpdateUsers) {
+      onUpdateUsers(users.filter((u) => u.id !== id));
+      setCoachSuccess('Coach account successfully deleted.');
     }
   };
 
@@ -2265,7 +2223,7 @@ export default function AdminPanel({
               className="space-y-6 text-left text-slate-300 animate-fade-in"
             >
               {/* Rules Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="max-w-3xl mx-auto w-full">
                 
                 {/* Module 1: System Logic Rules (Toggles) */}
                 <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
@@ -2331,74 +2289,6 @@ export default function AdminPanel({
                         className="w-5 h-5 rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-900 mt-1 cursor-pointer"
                       />
                     </div>
-                  </div>
-                </div>
-
-                {/* Module 2: AI Constraints & Policies Assistant */}
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-                  <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
-                    <Sparkles className="w-5 h-5 text-purple-400" />
-                    <div>
-                      <h4 className="text-sm font-extrabold text-white uppercase tracking-wider">AI Policy & Constraints Assistant</h4>
-                      <p className="text-[10px] text-slate-400">Use AI to automatically adjust system rules, scheduling behaviors, and policy values using natural language instructions.</p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <textarea
-                      value={aiPolicyPrompt}
-                      onChange={(e) => setAiPolicyPrompt(e.target.value)}
-                      placeholder="e.g. 'Disable buffer times and make sure early kickoffs are fairly spread' or 'Deactivate 5v5 overlap checks and enable home limit warnings'"
-                      className="w-full h-20 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-medium placeholder-slate-500 resize-none"
-                    />
-
-                    <div className="flex justify-between items-center gap-2">
-                      <span className="text-[9px] font-semibold text-slate-500 italic">Powered by Gemini AI Policy Engine</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          handleApplyAiPolicy(aiPolicyPrompt);
-                        }}
-                        className="bg-purple-600 hover:bg-purple-500 text-white font-extrabold px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 whitespace-nowrap shadow-sm hover:shadow"
-                      >
-                        <Sparkles className="w-3.5 h-3.5 text-purple-200" />
-                        <span>Apply Policy with AI</span>
-                      </button>
-                    </div>
-
-                    {aiPolicyStatus && (
-                      <div className={`p-3.5 rounded-xl border text-xs space-y-1.5 animate-fade-in ${
-                        aiPolicyStatus.success 
-                          ? 'bg-purple-950/40 border-purple-800/40 text-purple-200' 
-                          : 'bg-red-950/40 border-red-800/40 text-red-200'
-                      }`}>
-                        <p className="font-extrabold flex items-center gap-1.5 uppercase text-[10px] tracking-wider">
-                          {aiPolicyStatus.success ? (
-                            <>
-                              <CheckCircle className="w-4 h-4 text-purple-400" />
-                              Policy Instructions Applied
-                            </>
-                          ) : (
-                            <>
-                              <AlertTriangle className="w-4 h-4 text-red-400" />
-                              Policy Matching Error
-                            </>
-                          )}
-                        </p>
-                        <p className="text-[11px] text-slate-400 leading-relaxed font-medium">{aiPolicyStatus.message}</p>
-                        {aiPolicyStatus.changes.length > 0 && (
-                          <div className="pt-1.5 border-t border-purple-900/30 space-y-1">
-                            <p className="text-[9px] font-extrabold uppercase text-purple-400">Changed Constraints:</p>
-                            {aiPolicyStatus.changes.map((log, idx) => (
-                              <div key={idx} className="font-mono text-[10px] text-slate-300 flex items-center gap-1.5">
-                                <span className="text-purple-400">•</span>
-                                {log}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
@@ -3492,21 +3382,21 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                     <div className="flex items-center space-x-2">
                       <button
                         onClick={handleBulkImportFixtures}
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-extrabold py-1.5 px-3.5 rounded-lg flex items-center space-x-1.5 shadow transition-colors"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-extrabold py-1.5 px-3.5 rounded-lg flex items-center space-x-1.5 shadow transition-colors cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>Bulk Book ({filteredFixtures.filter(f => selectedFixtureIds.includes(f.id) && getFixtureStatus(f).type === 'VACANT').length} vacant)</span>
+                        <span>Bulk Book ({loadedFixtures.filter(f => selectedFixtureIds.includes(f.id) && getFixtureStatus(f).type === 'VACANT').length} vacant)</span>
                       </button>
                       <button
                         onClick={handleBulkUnbookFixtures}
-                        className="bg-red-600 hover:bg-red-500 text-white text-[11px] font-extrabold py-1.5 px-3.5 rounded-lg flex items-center space-x-1.5 shadow transition-colors"
+                        className="bg-red-600 hover:bg-red-500 text-white text-[11px] font-extrabold py-1.5 px-3.5 rounded-lg flex items-center space-x-1.5 shadow transition-colors cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>Bulk Unbook ({filteredFixtures.filter(f => selectedFixtureIds.includes(f.id) && (getFixtureStatus(f).type === 'BOOKED_SELF' || getFixtureStatus(f).type === 'RESOLVED_CLASH')).length} booked)</span>
+                        <span>Bulk Unbook ({loadedFixtures.filter(f => selectedFixtureIds.includes(f.id) && getFixtureStatus(f).booking !== undefined).length} booked)</span>
                       </button>
                       <button
                         onClick={() => {
-                          const selectedFixtures = filteredFixtures.filter(f => selectedFixtureIds.includes(f.id));
+                          const selectedFixtures = loadedFixtures.filter(f => selectedFixtureIds.includes(f.id));
                           if (selectedFixtures.length === 0) {
                             setImportFeedback('No fixtures are selected to delete!');
                             return;
@@ -3522,7 +3412,7 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                           });
 
                           const deletedIds = selectedFixtures.map(f => f.id);
-                          setLoadedFixtures(prev => prev.filter(f => !deletedIds.includes(f.id)));
+                          onUpdateFaFixtures(prev => prev.filter(f => !deletedIds.includes(f.id)));
                           setSelectedFixtureIds(prev => prev.filter(id => !deletedIds.includes(id)));
 
                           if (cancelCount > 0) {
@@ -3531,11 +3421,49 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                             setImportFeedback(`Successfully removed ${deletedIds.length} fixtures from the list.`);
                           }
                         }}
-                        className="bg-slate-700 hover:bg-slate-600 text-white text-[11px] font-extrabold py-1.5 px-3.5 rounded-lg flex items-center space-x-1.5 shadow transition-colors"
+                        className="bg-slate-700 hover:bg-slate-600 text-white text-[11px] font-extrabold py-1.5 px-3.5 rounded-lg flex items-center space-x-1.5 shadow transition-colors cursor-pointer"
                         title="Delete selected fixtures entirely (and cancel their bookings if they were booked)"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>Bulk Delete ({selectedFixtureIds.filter(id => filteredFixtures.some(f => f.id === id)).length} selected)</span>
+                        <span>Bulk Delete ({selectedFixtureIds.length} selected)</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (bookings.length === 0) {
+                            setImportFeedback('There are no active pitch bookings to remove.');
+                            return;
+                          }
+                          if (window.confirm(`Are you sure you want to remove ALL ${bookings.length} pitch bookings from the diary? This action cannot be undone.`)) {
+                            bookings.forEach(b => onCancelBooking(b.id));
+                            if (onClearAllBookings) {
+                              onClearAllBookings();
+                            }
+                            setImportFeedback(`Successfully removed all ${bookings.length} pitch bookings from the diary.`);
+                          }
+                        }}
+                        className="bg-rose-900/80 hover:bg-rose-800 text-rose-200 border border-rose-700/50 text-[11px] font-extrabold py-1.5 px-3.5 rounded-lg flex items-center space-x-1.5 shadow transition-colors cursor-pointer"
+                        title="Remove all current bookings from the diary"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-rose-300" />
+                        <span>Remove All Pitch Bookings ({bookings.length})</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (loadedFixtures.length === 0) {
+                            setImportFeedback('There are no fixtures to delete.');
+                            return;
+                          }
+                          if (window.confirm(`Are you sure you want to remove ALL ${loadedFixtures.length} FA fixtures from the schedule list? This action cannot be undone.`)) {
+                            onUpdateFaFixtures([]);
+                            setSelectedFixtureIds([]);
+                            setImportFeedback(`Successfully removed all ${loadedFixtures.length} FA fixtures.`);
+                          }
+                        }}
+                        className="bg-amber-900/80 hover:bg-amber-800 text-amber-200 border border-amber-700/50 text-[11px] font-extrabold py-1.5 px-3.5 rounded-lg flex items-center space-x-1.5 shadow transition-colors cursor-pointer"
+                        title="Remove all loaded fixtures from the list"
+                      >
+                        <X className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Clear All Fixtures ({loadedFixtures.length})</span>
                       </button>
                     </div>
                   </div>

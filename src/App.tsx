@@ -7,8 +7,38 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Calendar, ClipboardList, Settings, Shield, User, HelpCircle, CheckCircle, Info, X } from 'lucide-react';
 
-import { Booking, BookingStatus, PitchConfig, PitchSize, SlotChangeRequest, User as UserType } from './types';
-import { DEFAULT_PITCH_CONFIGS, INITIAL_BOOKINGS, INITIAL_SLOT_CHANGES, MOCK_USERS, MOCK_FA_FULLTIME_FIXTURES, FAFixture } from './mockData';
+import { Booking, BookingStatus, PitchConfig, PitchSize, SlotChangeRequest, User as UserType, ClubTeam } from './types';
+import { DEFAULT_PITCH_CONFIGS, INITIAL_BOOKINGS, INITIAL_SLOT_CHANGES, MOCK_USERS, MOCK_FA_FULLTIME_FIXTURES, FAFixture, SCOTTER_TEAMS } from './mockData';
+import {
+  subscribeToFirestoreData,
+  saveUserToFirestore,
+  saveUsersListToFirestore,
+  syncUsersListToFirestore,
+  deleteUserFromFirestore,
+  saveBookingToFirestore,
+  saveBookingsBulkToFirestore,
+  deleteBookingFromFirestore,
+  syncBookingsListToFirestore,
+  saveFaFixtureToFirestore,
+  syncFaFixturesListToFirestore,
+  savePitchConfigsListToFirestore,
+  saveSlotChangeRequestToFirestore,
+  deleteSlotChangeRequestFromFirestore,
+  saveTeamsListToFirestore,
+  syncTeamsListToFirestore,
+} from './lib/firestoreSync';
+
+export const PITCH_ORDER: Record<string, number> = {
+  '3v3': 1,
+  '5v5': 2,
+  '7v7': 3,
+  '9v9': 4,
+  '11v11': 5,
+};
+
+export function sortPitches(configs: PitchConfig[]): PitchConfig[] {
+  return [...configs].sort((a, b) => (PITCH_ORDER[a.id] || 99) - (PITCH_ORDER[b.id] || 99));
+}
 
 import Header from './components/Header';
 import PitchDiary from './components/PitchDiary';
@@ -16,6 +46,7 @@ import RequestManager from './components/RequestManager';
 import SlotConfigurator from './components/SlotConfigurator';
 import BookingModal from './components/BookingModal';
 import CoachesSetup from './components/CoachesSetup';
+import LoginModal from './components/LoginModal';
 
 export default function App() {
   // Load initial state from LocalStorage or mock data
@@ -59,7 +90,14 @@ export default function App() {
       }
       return cfg;
     });
-    return configs;
+    // Ensure 3v3 is present
+    if (!configs.some(c => c.id === '3v3')) {
+      const default3v3 = DEFAULT_PITCH_CONFIGS.find(c => c.id === '3v3');
+      if (default3v3) {
+        configs.unshift(default3v3);
+      }
+    }
+    return sortPitches(configs);
   });
 
   const [slotChangeRequests, setSlotChangeRequests] = useState<SlotChangeRequest[]>(() => {
@@ -79,6 +117,18 @@ export default function App() {
     return MOCK_USERS;
   });
 
+  const [teams, setTeams] = useState<ClubTeam[]>(() => {
+    const saved = localStorage.getItem('scotter_jfc_teams');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+    return SCOTTER_TEAMS;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('scotter_jfc_teams', JSON.stringify(teams));
+  }, [teams]);
+
   const [currentUser, setCurrentUser] = useState<UserType>(() => {
     const saved = localStorage.getItem('scotter_jfc_current_user');
     // Default to Paul Scholes (U9 Manager) to give a nice interactive starting point
@@ -95,11 +145,13 @@ export default function App() {
 
   // Booking Modal States
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [modalPrefills, setModalPrefills] = useState<{
     pitchId?: PitchSize;
     slot?: string;
     notes?: string;
     bookingId?: string;
+    fixtureId?: string;
   }>({});
 
   const [bookingConfirmation, setBookingConfirmation] = useState<{
@@ -118,7 +170,139 @@ export default function App() {
     }
   }, [bookingConfirmation]);
 
-  // Sync state to LocalStorage
+  // Real-time synchronization with Firebase Firestore
+  useEffect(() => {
+    const unsubscribe = subscribeToFirestoreData({
+      onUsersUpdate: (fetchedUsers) => {
+        if (fetchedUsers && fetchedUsers.length > 0) {
+          setUsers(fetchedUsers);
+        }
+      },
+      onTeamsUpdate: (fetchedTeams) => {
+        if (fetchedTeams && fetchedTeams.length > 0) {
+          setTeams(fetchedTeams);
+        }
+      },
+      onBookingsUpdate: (fetchedBookings) => {
+        if (fetchedBookings) {
+          setBookings(fetchedBookings);
+        }
+      },
+      onFaFixturesUpdate: (fetchedFixtures) => {
+        if (fetchedFixtures) {
+          setFaFixtures(fetchedFixtures);
+        }
+      },
+      onPitchConfigsUpdate: (fetchedConfigs) => {
+        if (fetchedConfigs) {
+          setPitchConfigs(sortPitches(fetchedConfigs));
+        }
+      },
+      onSlotChangeRequestsUpdate: (fetchedRequests) => {
+        if (fetchedRequests) {
+          setSlotChangeRequests(fetchedRequests);
+        }
+      },
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Handlers for state updates with automatic Firestore persistence
+  const handleUpdateUsers = (newUsers: UserType[]) => {
+    setUsers(newUsers);
+    syncUsersListToFirestore(newUsers).catch(console.error);
+  };
+
+  const handleUpdateTeams = (newTeams: ClubTeam[]) => {
+    setTeams(newTeams);
+    syncTeamsListToFirestore(newTeams).catch(console.error);
+  };
+
+  const handleRenameTeam = (oldName: string, newName: string, newPitchSize?: PitchSize) => {
+    const nextTeams = teams.map((t) =>
+      t.name === oldName
+        ? { ...t, name: newName, pitchSize: newPitchSize || t.pitchSize }
+        : t
+    );
+    setTeams(nextTeams);
+    syncTeamsListToFirestore(nextTeams).catch(console.error);
+
+    const nextUsers = users.map((u) =>
+      u.teamName === oldName ? { ...u, teamName: newName } : u
+    );
+    setUsers(nextUsers);
+    syncUsersListToFirestore(nextUsers).catch(console.error);
+
+    if (currentUser.teamName === oldName) {
+      const updatedSelf = { ...currentUser, teamName: newName };
+      setCurrentUser(updatedSelf);
+      saveUserToFirestore(updatedSelf).catch(console.error);
+    }
+  };
+
+  const handlePromoteToNextSeason = () => {
+    const teamNameMap: Record<string, string> = {};
+
+    const nextTeams = teams.map((t) => {
+      const match = t.name.match(/U(\d+)/i) || t.name.match(/Under\s*(\d+)/i);
+      if (!match) return t;
+
+      const age = parseInt(match[1], 10);
+      const nextAge = age + 1;
+      const newName = t.name.replace(/U\d+/i, `U${nextAge}`).replace(/Under\s*\d+/i, `U${nextAge}`);
+      const newCategory = t.category.replace(/U\d+/i, `U${nextAge}`).replace(/Under\s*\d+/i, `U${nextAge}`);
+
+      let newPitchSize: PitchSize = t.pitchSize;
+      if (nextAge <= 8) newPitchSize = '5v5';
+      else if (nextAge <= 10) newPitchSize = '7v7';
+      else if (nextAge <= 12) newPitchSize = '9v9';
+      else newPitchSize = '11v11';
+
+      teamNameMap[t.name] = newName;
+
+      return {
+        ...t,
+        name: newName,
+        category: newCategory,
+        pitchSize: newPitchSize,
+      };
+    });
+
+    setTeams(nextTeams);
+    saveTeamsListToFirestore(nextTeams).catch(console.error);
+
+    const nextUsers = users.map((u) => {
+      if (u.teamName && teamNameMap[u.teamName]) {
+        return { ...u, teamName: teamNameMap[u.teamName] };
+      }
+      return u;
+    });
+
+    setUsers(nextUsers);
+    saveUsersListToFirestore(nextUsers).catch(console.error);
+
+    if (currentUser.teamName && teamNameMap[currentUser.teamName]) {
+      const updatedSelf = { ...currentUser, teamName: teamNameMap[currentUser.teamName] };
+      setCurrentUser(updatedSelf);
+      saveUserToFirestore(updatedSelf).catch(console.error);
+    }
+  };
+
+  const handleUpdateCurrentUser = (user: UserType) => {
+    setCurrentUser(user);
+    saveUserToFirestore(user).catch(console.error);
+  };
+
+  const handleUpdateFaFixtures = (updater: FAFixture[] | ((prev: FAFixture[]) => FAFixture[])) => {
+    setFaFixtures((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      syncFaFixturesListToFirestore(next).catch(console.error);
+      return next;
+    });
+  };
+
+  // Sync state to LocalStorage as secondary cache
   useEffect(() => {
     localStorage.setItem('scotter_jfc_bookings', JSON.stringify(bookings));
   }, [bookings]);
@@ -139,6 +323,12 @@ export default function App() {
     localStorage.setItem('scotter_jfc_users', JSON.stringify(users));
   }, [users]);
 
+  // Handle login from LoginModal
+  const handleLogin = (user: UserType) => {
+    setCurrentUser(user);
+    saveUserToFirestore(user).catch(console.error);
+  };
+
   // Handle persona switching
   const handleUserChange = (user: UserType) => {
     if (user.password) {
@@ -152,11 +342,18 @@ export default function App() {
   };
 
   // Launch modal pre-filled from specific diary grid slot
-  const handleOpenBookingModal = (pitchId: PitchSize, slot: string, notes?: string, date?: string, existingBookingId?: string) => {
+  const handleOpenBookingModal = (
+    pitchId: PitchSize,
+    slot: string,
+    notes?: string,
+    date?: string,
+    existingBookingId?: string,
+    fixtureId?: string
+  ) => {
     if (date) {
       setSelectedDate(date);
     }
-    setModalPrefills({ pitchId, slot, notes, bookingId: existingBookingId });
+    setModalPrefills({ pitchId, slot, notes, bookingId: existingBookingId, fixtureId });
     setIsBookingModalOpen(true);
   };
 
@@ -170,24 +367,138 @@ export default function App() {
     endTime?: string;
     bookingType?: 'STANDARD' | 'MATCH';
   }) => {
+    // Check if this booking correlates to an FA Fixture
+    const targetFixtureId = modalPrefills.fixtureId;
+    let targetFaFixture = targetFixtureId ? faFixtures.find((f) => f.id === targetFixtureId) : undefined;
+
+    if (!targetFaFixture) {
+      targetFaFixture = faFixtures.find((f) => {
+        if (modalPrefills.bookingId) {
+          const b = bookings.find((bk) => bk.id === modalPrefills.bookingId);
+          if (
+            b &&
+            ((b.pitchId === f.pitchId && b.date === f.date && b.timeSlot === f.timeSlot) ||
+              (b.notes && (b.notes.includes(f.homeTeam) || b.notes.includes(f.awayTeam))))
+          ) {
+            return true;
+          }
+        }
+        if (data.notes) {
+          const notesLower = data.notes.toLowerCase();
+          const homeLower = f.homeTeam.toLowerCase();
+          const awayLower = f.awayTeam.toLowerCase();
+          if (
+            (notesLower.includes(homeLower) && notesLower.includes(awayLower)) ||
+            (notesLower.includes(homeLower) && notesLower.includes('vs'))
+          ) {
+            return true;
+          }
+        }
+        return false;
+      });
+    }
+
+    const newStatus = currentUser.role === 'ADMIN' ? BookingStatus.APPROVED : BookingStatus.PENDING;
+
+    if (targetFaFixture) {
+      const matchedFixtureId = targetFaFixture.id;
+      const prevDate = targetFaFixture.date;
+      const prevPitch = targetFaFixture.pitchId;
+      const prevSlot = targetFaFixture.timeSlot;
+      const homeTeam = targetFaFixture.homeTeam;
+      const awayTeam = targetFaFixture.awayTeam;
+
+      const updatedFixture: FAFixture = {
+        ...targetFaFixture,
+        pitchId: data.pitchId,
+        date: data.date,
+        timeSlot: data.timeSlot,
+      };
+
+      // 1. Keep the SAME fixture entry by updating its date, pitchId, and timeSlot
+      setFaFixtures((prev) =>
+        prev.map((f) => (f.id === matchedFixtureId ? updatedFixture : f))
+      );
+      saveFaFixtureToFirestore(updatedFixture).catch(console.error);
+
+      // 2. Update existing booking or create new booking linked to the fixture
+      const existingBooking = bookings.find((b) => {
+        if (modalPrefills.bookingId && b.id === modalPrefills.bookingId) return true;
+        if (b.status === BookingStatus.DECLINED) return false;
+        const matchesOldSlot = b.pitchId === prevPitch && b.date === prevDate && b.timeSlot === prevSlot;
+        const matchesNewSlot = b.pitchId === data.pitchId && b.date === data.date && b.timeSlot === data.timeSlot;
+        const matchesNotes = b.notes && (b.notes.includes(homeTeam) || b.notes.includes(awayTeam));
+        return matchesOldSlot || matchesNewSlot || matchesNotes;
+      });
+
+      if (existingBooking) {
+        const updatedBooking: Booking = {
+          ...existingBooking,
+          pitchId: data.pitchId,
+          date: data.date,
+          timeSlot: data.timeSlot,
+          endTime: data.endTime,
+          bookingType: data.bookingType,
+          notes: data.notes || existingBooking.notes,
+          teamName: data.teamName || existingBooking.teamName,
+          status: newStatus,
+        };
+        setBookings((prev) =>
+          prev.map((b) => (b.id === existingBooking.id ? updatedBooking : b))
+        );
+        saveBookingToFirestore(updatedBooking).catch(console.error);
+      } else {
+        const newBooking: Booking = {
+          id: `b-fa-${matchedFixtureId}-${Date.now()}`,
+          pitchId: data.pitchId,
+          date: data.date,
+          timeSlot: data.timeSlot,
+          endTime: data.endTime,
+          bookingType: data.bookingType,
+          teamName: data.teamName || targetFaFixture.scotterTeam,
+          managerName: currentUser.name,
+          managerId: currentUser.id,
+          notes: data.notes || `[FA Full-Time Match] ${targetFaFixture.competition}: ${homeTeam} vs ${awayTeam}`,
+          status: newStatus,
+          createdAt: new Date().toISOString(),
+        };
+        setBookings((prev) => [newBooking, ...prev]);
+        saveBookingToFirestore(newBooking).catch(console.error);
+      }
+
+      setBookingConfirmation({
+        show: true,
+        message:
+          currentUser.role === 'ADMIN'
+            ? 'Fixture schedule updated and pitch booking approved!'
+            : 'Fixture update submitted and sent to the admin for approval.',
+        type: currentUser.role === 'ADMIN' ? 'success' : 'info',
+      });
+
+      setIsBookingModalOpen(false);
+      setModalPrefills({});
+      return;
+    }
+
     if (modalPrefills.bookingId) {
       // UPDATE/RE-BOOK EXISTING BOOKING
-      setBookings((prev) =>
-        prev.map((b) =>
-          b.id === modalPrefills.bookingId
-            ? {
-                ...b,
-                pitchId: data.pitchId,
-                date: data.date,
-                timeSlot: data.timeSlot,
-                endTime: data.endTime,
-                bookingType: data.bookingType,
-                notes: data.notes,
-                status: currentUser.role === 'ADMIN' ? BookingStatus.APPROVED : BookingStatus.PENDING,
-              }
-            : b
-        )
-      );
+      const existingB = bookings.find((b) => b.id === modalPrefills.bookingId);
+      if (existingB) {
+        const updatedB: Booking = {
+          ...existingB,
+          pitchId: data.pitchId,
+          date: data.date,
+          timeSlot: data.timeSlot,
+          endTime: data.endTime,
+          bookingType: data.bookingType,
+          notes: data.notes,
+          status: currentUser.role === 'ADMIN' ? BookingStatus.APPROVED : BookingStatus.PENDING,
+        };
+        setBookings((prev) =>
+          prev.map((b) => (b.id === modalPrefills.bookingId ? updatedB : b))
+        );
+        saveBookingToFirestore(updatedB).catch(console.error);
+      }
 
       setBookingConfirmation({
         show: true,
@@ -218,6 +529,7 @@ export default function App() {
     };
 
     setBookings((prev) => [newBooking, ...prev]);
+    saveBookingToFirestore(newBooking).catch(console.error);
 
     setBookingConfirmation({
       show: true,
@@ -230,42 +542,86 @@ export default function App() {
 
   // Approve Booking Request
   const handleApproveBooking = (id: string) => {
-    setBookings((prev) =>
-      prev.map((b) => (b.id === id ? { ...b, status: BookingStatus.APPROVED } : b))
-    );
+    const updated = bookings.find((b) => b.id === id);
+    if (updated) {
+      const newB = { ...updated, status: BookingStatus.APPROVED };
+      setBookings((prev) => prev.map((b) => (b.id === id ? newB : b)));
+      saveBookingToFirestore(newB).catch(console.error);
+    }
   };
 
   // Decline Booking Request (with a mandatory reason)
   const handleDeclineBooking = (id: string, reason: string) => {
-    setBookings((prev) =>
-      prev.map((b) =>
-        b.id === id ? { ...b, status: BookingStatus.DECLINED, declineReason: reason } : b
-      )
-    );
+    const updated = bookings.find((b) => b.id === id);
+    if (updated) {
+      const newB = { ...updated, status: BookingStatus.DECLINED, declineReason: reason };
+      setBookings((prev) => prev.map((b) => (b.id === id ? newB : b)));
+      saveBookingToFirestore(newB).catch(console.error);
+    }
   };
 
   // Cancel Booking or Request
   const handleCancelBooking = (id: string) => {
     setBookings((prev) => prev.filter((x) => x.id !== id));
+    deleteBookingFromFirestore(id).catch(console.error);
+  };
+
+  const handleClearAllBookings = () => {
+    setBookings([]);
+    syncBookingsListToFirestore([]).catch(console.error);
   };
 
   // Update or reschedule an existing booking
   const handleUpdateBooking = (id: string, updatedFields: Partial<Booking>) => {
-    setBookings((prev) =>
-      prev.map((b) => (b.id === id ? { ...b, ...updatedFields } : b))
-    );
+    const existingBooking = bookings.find((b) => b.id === id);
+    if (existingBooking) {
+      const updatedBooking = { ...existingBooking, ...updatedFields };
+      setBookings((prev) =>
+        prev.map((b) => (b.id === id ? updatedBooking : b))
+      );
+      saveBookingToFirestore(updatedBooking).catch(console.error);
+
+      if (updatedFields.date || updatedFields.pitchId || updatedFields.timeSlot) {
+        const newPitch = updatedFields.pitchId || existingBooking.pitchId;
+        const newDate = updatedFields.date || existingBooking.date;
+        const newSlot = updatedFields.timeSlot || existingBooking.timeSlot;
+
+        const updatedFixturesList: FAFixture[] = faFixtures.map((f) => {
+          const matchesOldSlot =
+            f.pitchId === existingBooking.pitchId &&
+            f.date === existingBooking.date &&
+            f.timeSlot === existingBooking.timeSlot;
+          const matchesNotes =
+            existingBooking.notes &&
+            (existingBooking.notes.includes(f.homeTeam) || existingBooking.notes.includes(f.awayTeam));
+          if (matchesOldSlot || matchesNotes) {
+            return {
+              ...f,
+              pitchId: newPitch,
+              date: newDate,
+              timeSlot: newSlot,
+            };
+          }
+          return f;
+        });
+
+        setFaFixtures(updatedFixturesList);
+        syncFaFixturesListToFirestore(updatedFixturesList).catch(console.error);
+      }
+    }
   };
 
   // Add multiple bookings at once (block booking & auto imports)
   const handleAddBookingsBulk = (newBookingsList: Booking[]) => {
     setBookings((prev) => [...newBookingsList, ...prev]);
+    saveBookingsBulkToFirestore(newBookingsList).catch(console.error);
   };
 
   // Update Standard Pitch Slots (Admin directly changes slots)
   const handleUpdatePitchSlots = (pitchId: PitchSize, newSlots: string[]) => {
-    setPitchConfigs((prev) =>
-      prev.map((p) => (p.id === pitchId ? { ...p, defaultSlots: newSlots } : p))
-    );
+    const nextConfigs = pitchConfigs.map((p) => (p.id === pitchId ? { ...p, defaultSlots: newSlots } : p));
+    setPitchConfigs(nextConfigs);
+    savePitchConfigsListToFirestore(nextConfigs).catch(console.error);
   };
 
   // Submit Slot Change Request (from Manager)
@@ -285,6 +641,7 @@ export default function App() {
     };
 
     setSlotChangeRequests((prev) => [newRequest, ...prev]);
+    saveSlotChangeRequestToFirestore(newRequest).catch(console.error);
   };
 
   // Approve Slot Change Request (automatically alters the PitchConfig!)
@@ -293,48 +650,98 @@ export default function App() {
     if (!req) return;
 
     // Apply the actual slot modification to the corresponding pitch configuration!
-    setPitchConfigs((prev) =>
-      prev.map((p) => {
-        if (p.id !== req.pitchId) return p;
+    const updatedPitchConfigs = pitchConfigs.map((p) => {
+      if (p.id !== req.pitchId) return p;
 
-        let updatedSlots = [...p.defaultSlots];
-        if (req.actionType === 'ADD') {
-          if (!updatedSlots.includes(req.targetSlot)) {
-            updatedSlots.push(req.targetSlot);
-          }
-        } else if (req.actionType === 'REMOVE') {
-          updatedSlots = updatedSlots.filter((s) => s !== req.targetSlot);
-        } else if (req.actionType === 'CHANGE' && req.newSlotTime) {
-          updatedSlots = updatedSlots.map((s) => (s === req.targetSlot ? req.newSlotTime! : s));
+      let updatedSlots = [...p.defaultSlots];
+      if (req.actionType === 'ADD') {
+        if (!updatedSlots.includes(req.targetSlot)) {
+          updatedSlots.push(req.targetSlot);
         }
+      } else if (req.actionType === 'REMOVE') {
+        updatedSlots = updatedSlots.filter((s) => s !== req.targetSlot);
+      } else if (req.actionType === 'CHANGE' && req.newSlotTime) {
+        updatedSlots = updatedSlots.map((s) => (s === req.targetSlot ? req.newSlotTime! : s));
+      }
 
-        return { ...p, defaultSlots: updatedSlots.sort() };
-      })
-    );
+      return { ...p, defaultSlots: updatedSlots.sort() };
+    });
+
+    setPitchConfigs(updatedPitchConfigs);
+    savePitchConfigsListToFirestore(updatedPitchConfigs).catch(console.error);
 
     // Update the request status
+    const updatedReq: SlotChangeRequest = { ...req, status: 'APPROVED' };
     setSlotChangeRequests((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, status: 'APPROVED' } : r))
+      prev.map((r) => (r.id === id ? updatedReq : r))
     );
+    saveSlotChangeRequestToFirestore(updatedReq).catch(console.error);
   };
 
   // Decline Slot Change Request
   const handleDeclineSlotChange = (id: string, reason: string) => {
-    setSlotChangeRequests((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, status: 'DECLINED', declineReason: reason } : r))
-    );
+    const req = slotChangeRequests.find((r) => r.id === id);
+    if (req) {
+      const updatedReq: SlotChangeRequest = { ...req, status: 'DECLINED', declineReason: reason };
+      setSlotChangeRequests((prev) =>
+        prev.map((r) => (r.id === id ? updatedReq : r))
+      );
+      saveSlotChangeRequestToFirestore(updatedReq).catch(console.error);
+    }
   };
+
+  // Auto-cleanup requested team/user removals if they exist in Firestore/LocalStorage
+  useEffect(() => {
+    if (!teams || !users || teams.length === 0 || users.length === 0) return;
+
+    let teamsChanged = false;
+    let usersChanged = false;
+
+    const forbiddenCategories = ['U15', 'U17', 'U18', 'Veterans', 'Vets'];
+    const forbiddenTeamNames = ['Scotter United U15s', 'Scotter United U17s', 'Scotter United U18s', 'Scotter United Veterans'];
+
+    const cleanedTeams = teams.filter((t) => {
+      const isForbidden = forbiddenCategories.includes(t.category) || forbiddenTeamNames.some((fn) => t.name.toLowerCase().includes(fn.toLowerCase()));
+      if (isForbidden) teamsChanged = true;
+      return !isForbidden;
+    });
+
+    const forbiddenCoachNames = ['Sarah Jenkins', 'AndyC', 'WillC'];
+
+    const cleanedUsers = users
+      .map((u) => {
+        if (u.name.toLowerCase().includes('waynef') && u.teamName && (u.teamName.includes('U18') || u.teamName.includes('18'))) {
+          usersChanged = true;
+          return { ...u, teamName: undefined };
+        }
+        return u;
+      })
+      .filter((u) => {
+        const isForbidden = forbiddenCoachNames.some((fn) => u.name.toLowerCase().includes(fn.toLowerCase()));
+        if (isForbidden) usersChanged = true;
+        return !isForbidden;
+      });
+
+    if (teamsChanged) {
+      setTeams(cleanedTeams);
+      syncTeamsListToFirestore(cleanedTeams).catch(console.error);
+    }
+
+    if (usersChanged) {
+      setUsers(cleanedUsers);
+      syncUsersListToFirestore(cleanedUsers).catch(console.error);
+    }
+  }, [teams, users]);
 
   // Clear local storage to reset to pristine mock state
   const handleResetApp = () => {
-    if (confirm('Are you sure you want to reset all bookings and configurations back to default club settings?')) {
-      localStorage.removeItem('scotter_jfc_bookings');
-      localStorage.removeItem('scotter_jfc_pitch_configs');
-      localStorage.removeItem('scotter_jfc_slot_changes');
-      localStorage.removeItem('scotter_jfc_current_user');
-      localStorage.removeItem('scotter_jfc_users');
-      window.location.reload();
-    }
+    localStorage.removeItem('scotter_jfc_bookings');
+    localStorage.removeItem('scotter_jfc_pitch_configs');
+    localStorage.removeItem('scotter_jfc_slot_changes');
+    localStorage.removeItem('scotter_jfc_current_user');
+    localStorage.removeItem('scotter_jfc_users');
+    localStorage.removeItem('scotter_jfc_teams');
+    window.location.reload();
   };
 
   // Count pending bookings for indicator badge
@@ -349,7 +756,7 @@ export default function App() {
       <Header
         currentUser={currentUser}
         users={users}
-        onUserChange={handleUserChange}
+        onOpenLoginModal={() => setIsLoginModalOpen(true)}
       />
 
       {/* Role Indicator Info Banner */}
@@ -368,12 +775,11 @@ export default function App() {
             </span>
           </div>
           <div className="flex items-center space-x-2">
-            <span className="text-slate-300 font-medium">Simulation Mode:</span>
             <button
-              onClick={() => handleUserChange(currentUser.role === 'ADMIN' ? MOCK_USERS[1] : MOCK_USERS[0])}
-              className="bg-white text-blue-900 font-bold px-2 py-0.5 rounded hover:bg-slate-100 transition-colors text-[11px]"
+              onClick={() => setIsLoginModalOpen(true)}
+              className="bg-white text-blue-900 font-bold px-3 py-1 rounded-lg hover:bg-slate-100 transition-colors text-xs uppercase tracking-wider"
             >
-              Toggle to {currentUser.role === 'ADMIN' ? 'Manager' : 'Admin'}
+              Log In / Switch Coach Account
             </button>
           </div>
         </div>
@@ -467,9 +873,10 @@ export default function App() {
                   onAddBookingsBulk={handleAddBookingsBulk}
                   onUpdateBooking={handleUpdateBooking}
                   users={users}
-                  onUpdateUsers={setUsers}
+                  onUpdateUsers={handleUpdateUsers}
                   faFixtures={faFixtures}
-                  onUpdateFaFixtures={setFaFixtures}
+                  onUpdateFaFixtures={handleUpdateFaFixtures}
+                  onClearAllBookings={handleClearAllBookings}
                 />
               )}
 
@@ -498,9 +905,13 @@ export default function App() {
               {activeTab === 'COACHES' && (
                 <CoachesSetup
                   users={users}
-                  onUpdateUsers={setUsers}
+                  onUpdateUsers={handleUpdateUsers}
                   currentUser={currentUser}
-                  onUpdateCurrentUser={setCurrentUser}
+                  onUpdateCurrentUser={handleUpdateCurrentUser}
+                  teams={teams}
+                  onUpdateTeams={handleUpdateTeams}
+                  onRenameTeam={handleRenameTeam}
+                  onPromoteToNextSeason={handlePromoteToNextSeason}
                 />
               )}
             </motion.div>
@@ -621,6 +1032,26 @@ export default function App() {
               </button>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+      {/* Login / Switch Account Modal */}
+      <AnimatePresence>
+        {isLoginModalOpen && (
+          <LoginModal
+            isOpen={isLoginModalOpen}
+            onClose={() => setIsLoginModalOpen(false)}
+            users={users}
+            onLoginSuccess={(loggedInUser) => {
+              handleLogin(loggedInUser);
+              setIsLoginModalOpen(false);
+            }}
+            onUpdateUserEmail={(userId, email) => {
+              const updatedUsers = users.map((u) =>
+                u.id === userId ? { ...u, googleEmail: email, googleLinked: true } : u
+              );
+              handleUpdateUsers(updatedUsers);
+            }}
+          />
         )}
       </AnimatePresence>
     </div>

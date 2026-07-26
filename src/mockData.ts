@@ -3,47 +3,158 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Booking, BookingStatus, PitchConfig, SlotChangeRequest, User, PitchSize } from './types';
+import { Booking, BookingStatus, PitchConfig, SlotChangeRequest, User, PitchSize, ClubTeam } from './types';
 
 const RAW_MOCK_USERS: User[] = [
   {
-    id: 'admin-1',
-    name: 'Sarah Jenkins (Club Secretary)',
+    id: 'admin-nicolien',
+    name: 'NicolienL',
     role: 'ADMIN',
+    password: 'ScotterNL2026',
+  },
+  // U7
+  {
+    id: 'coach-karlm',
+    name: 'KarlM',
+    role: 'MANAGER',
+    teamName: 'U7',
+    password: 'ScotterKM7',
   },
   {
-    id: 'manager-u7',
-    name: 'David Beckham',
+    id: 'coach-dans',
+    name: 'DanS',
     role: 'MANAGER',
-    teamName: 'Scotter United U7 Juniors',
+    teamName: 'U7',
+    password: 'ScotterDS7',
+  },
+  // U8
+  {
+    id: 'coach-philc',
+    name: 'PhilC',
+    role: 'MANAGER',
+    teamName: 'U8',
+    password: 'ScotterPC8',
   },
   {
-    id: 'manager-u9',
-    name: 'Paul Scholes',
+    id: 'coach-dannyr',
+    name: 'DannyR',
     role: 'MANAGER',
-    teamName: 'Scotter United U9 Saints',
+    teamName: 'U8',
+    password: 'ScotterDR8',
+  },
+  // U9
+  {
+    id: 'coach-mitchg',
+    name: 'MitchG',
+    role: 'MANAGER',
+    teamName: 'U9',
+    password: 'ScotterMG9',
   },
   {
-    id: 'manager-u11',
-    name: 'Steven Gerrard',
+    id: 'coach-tomc',
+    name: 'TomC',
     role: 'MANAGER',
-    teamName: 'Scotter United U11 Colts',
+    teamName: 'U9',
+    password: 'ScotterTC9',
+  },
+  // U10
+  {
+    id: 'coach-marke',
+    name: 'MarkE',
+    role: 'MANAGER',
+    teamName: 'U10',
+    password: 'ScotterME10',
   },
   {
-    id: 'manager-u13',
-    name: 'Frank Lampard',
+    id: 'coach-annaw',
+    name: 'AnnaW',
     role: 'MANAGER',
-    teamName: 'Scotter United U13 Saints',
+    teamName: 'U10',
+    password: 'ScotterAW10',
+  },
+  // U11
+  {
+    id: 'coach-olig',
+    name: 'OliG',
+    role: 'MANAGER',
+    teamName: 'U11',
+    password: 'ScotterOG11',
   },
   {
-    id: 'manager-u15',
-    name: 'Wayne Rooney',
+    id: 'coach-chrisw',
+    name: 'ChrisW',
     role: 'MANAGER',
-    teamName: 'Scotter United U15s',
+    teamName: 'U11 Saints',
+    password: 'ScotterCW11',
+  },
+  // U12
+  {
+    id: 'coach-liamw',
+    name: 'LiamW',
+    role: 'MANAGER',
+    teamName: 'U12',
+    password: 'ScotterLW12',
+  },
+  {
+    id: 'coach-adamh',
+    name: 'AdamH',
+    role: 'MANAGER',
+    teamName: 'U12',
+    password: 'ScotterAH12',
+  },
+  {
+    id: 'coach-sarahs',
+    name: 'SarahS',
+    role: 'MANAGER',
+    teamName: 'U12',
+    password: 'ScotterSS12',
+  },
+  // U13
+  {
+    id: 'coach-dana',
+    name: 'DanA',
+    role: 'MANAGER',
+    teamName: 'U13',
+    password: 'ScotterDA13',
+  },
+  {
+    id: 'coach-paulh',
+    name: 'PaulH',
+    role: 'MANAGER',
+    teamName: 'U13',
+    password: 'ScotterPH13',
+  },
+  // U14
+  {
+    id: 'coach-paulf',
+    name: 'PaulF',
+    role: 'MANAGER',
+    teamName: 'U14',
+    password: 'ScotterPF14',
+  },
+  {
+    id: 'coach-gavd',
+    name: 'GavD',
+    role: 'MANAGER',
+    teamName: 'U14',
+    password: 'ScotterGD14',
+  },
+  // Kept coach (unassigned as U18 team was removed)
+  {
+    id: 'coach-waynef',
+    name: 'WayneF',
+    role: 'MANAGER',
+    password: 'ScotterWF18',
   },
 ];
 
 export const DEFAULT_PITCH_CONFIGS: PitchConfig[] = [
+  {
+    id: '3v3',
+    name: '3v3',
+    description: 'Mini pitch for Toddlers and Under 6s fun-football sessions.',
+    defaultSlots: ['09:00', '10:00', '11:00', '12:00'],
+  },
   {
     id: '5v5',
     name: '5v5',
@@ -139,13 +250,7 @@ const RAW_INITIAL_SLOT_CHANGES: SlotChangeRequest[] = [
   },
 ];
 
-export interface ClubTeam {
-  name: string;
-  category: string;
-  pitchSize: PitchSize;
-}
-
-const RAW_SCOTTER_TEAMS: ClubTeam[] = [
+const RAW_SCOTTER_TEAMS: Omit<ClubTeam, 'id'>[] = [
   // U7s
   { name: 'Scotter United U7 Juniors', category: 'U7s', pitchSize: '5v5' },
   { name: 'Scotter United U7 Saints', category: 'U7s', pitchSize: '5v5' },
@@ -169,14 +274,9 @@ const RAW_SCOTTER_TEAMS: ClubTeam[] = [
   { name: 'Scotter United U13 Juniors', category: 'U13', pitchSize: '11v11' },
   // Senior formats
   { name: 'Scotter United U14s', category: 'U14', pitchSize: '11v11' },
-  { name: 'Scotter United U15s', category: 'U15', pitchSize: '11v11' },
-  { name: 'Scotter United U17s', category: 'U17', pitchSize: '11v11' },
-  { name: 'Scotter United U18s', category: 'U18', pitchSize: '11v11' },
   // Girls
   { name: 'Scotter United U12 Girls', category: 'U12 Girls', pitchSize: '9v9' },
   { name: 'Scotter United U14 Girls', category: 'U14 Girls', pitchSize: '11v11' },
-  // Veterans
-  { name: 'Scotter United Veterans', category: 'Veterans', pitchSize: '11v11' },
 ];
 
 export interface FAFixture {
@@ -549,10 +649,14 @@ export const INITIAL_SLOT_CHANGES: SlotChangeRequest[] = RAW_INITIAL_SLOT_CHANGE
   teamName: sc.teamName.replace('Scotter United ', ''),
 }));
 
-export const SCOTTER_TEAMS: ClubTeam[] = RAW_SCOTTER_TEAMS.map(t => ({
-  ...t,
-  name: t.name.replace('Scotter United ', ''),
-}));
+export const SCOTTER_TEAMS: ClubTeam[] = RAW_SCOTTER_TEAMS.map((t, idx) => {
+  const name = t.name.replace('Scotter United ', '');
+  return {
+    ...t,
+    id: `team-${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${idx}`,
+    name,
+  };
+});
 
 export const MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = RAW_MOCK_FA_FULLTIME_FIXTURES.map(f => ({
   ...f,
