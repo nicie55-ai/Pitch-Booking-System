@@ -153,7 +153,7 @@ export const DEFAULT_PITCH_CONFIGS: PitchConfig[] = [
     id: '3v3',
     name: '3v3',
     description: 'Mini pitch for Toddlers and Under 6s fun-football sessions.',
-    defaultSlots: ['09:00', '10:00', '11:00', '12:00'],
+    defaultSlots: ['09:30', '10:45', '12:00', '13:15'],
   },
   {
     id: '5v5',

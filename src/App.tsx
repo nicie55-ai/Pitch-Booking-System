@@ -770,18 +770,20 @@ export default function App() {
               {currentUser.role === 'ADMIN' ? (
                 <>Logged in as <strong>Sarah Jenkins (Admin)</strong>. You can approve/decline pitch bookings and manage kickoff slots.</>
               ) : (
-                <>Logged in as <strong>{currentUser.name}</strong>, managing <strong>{currentUser.teamName}</strong>. Request slots & suggested times.</>
+                <>Logged in as <strong>{currentUser.name}</strong>, managing <strong>{currentUser.teamName}</strong>. Book match & training times.</>
               )}
             </span>
           </div>
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => setIsLoginModalOpen(true)}
-              className="bg-white text-blue-900 font-bold px-3 py-1 rounded-lg hover:bg-slate-100 transition-colors text-xs uppercase tracking-wider"
-            >
-              Log In / Switch Coach Account
-            </button>
-          </div>
+          {currentUser.role === 'ADMIN' && (
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setIsLoginModalOpen(true)}
+                className="bg-white text-blue-900 font-bold px-3 py-1 rounded-lg hover:bg-slate-100 transition-colors text-xs uppercase tracking-wider"
+              >
+                Log In / Switch Coach Account
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -829,11 +831,6 @@ export default function App() {
           >
             <Settings className="w-4 h-4" />
             <span>Slot Settings</span>
-            {pendingSlotChangesCount > 0 && currentUser.role === 'ADMIN' && (
-              <span className="bg-amber-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full ml-1">
-                {pendingSlotChangesCount}
-              </span>
-            )}
           </button>
 
           <button
@@ -893,12 +890,8 @@ export default function App() {
               {activeTab === 'SLOTS' && (
                 <SlotConfigurator
                   pitchConfigs={pitchConfigs}
-                  slotChangeRequests={slotChangeRequests}
                   currentUser={currentUser}
                   onUpdatePitchSlots={handleUpdatePitchSlots}
-                  onSubmitSlotChangeRequest={handleSubmitSlotChangeRequest}
-                  onApproveSlotChange={handleApproveSlotChange}
-                  onDeclineSlotChange={handleDeclineSlotChange}
                 />
               )}
 

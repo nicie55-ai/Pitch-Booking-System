@@ -84,7 +84,7 @@ export default function BookingModal({
           duration = 120;
         } else if (pId === '9v9') {
           duration = 90;
-        } else if (pId === '7v7') {
+        } else if (pId === '7v7' || pId === '3v3') {
           duration = 75;
         } else if (pId === '5v5') {
           duration = 60;
@@ -134,8 +134,7 @@ export default function BookingModal({
       setDate(selectedDate || new Date().toISOString().split('T')[0]);
       
       const pitchSlots = pitches.find((p) => p.id === selectedPitchId)?.defaultSlots || [];
-      const isCustom = selectedSlot && !pitchSlots.includes(selectedSlot);
-      setIsCustomTime(!!isCustom);
+      setIsCustomTime(false);
 
       const resolvedSlot = selectedSlot || pitchSlots[0] || '09:30';
       setTimeSlot(resolvedSlot);
@@ -165,6 +164,8 @@ export default function BookingModal({
     const d = new Date(date);
     const day = d.getDay();
     const isWeekend = day === 0 || day === 6;
+    
+    const pitchSlots = pitches.find((p) => p.id === pitchId)?.defaultSlots || [];
     let baseSlots: string[] = [];
     if (isWeekend) {
       if (pitchId === '11v11') {
@@ -179,7 +180,13 @@ export default function BookingModal({
       ];
     }
 
-    return baseSlots.filter((slot) => {
+    const combinedSlots = Array.from(
+      new Set([...baseSlots, ...pitchSlots, ...(timeSlot ? [timeSlot] : []), ...(selectedSlot ? [selectedSlot] : [])])
+    ).sort();
+
+    return combinedSlots.filter((slot) => {
+      if (slot === timeSlot || slot === selectedSlot) return true;
+
       const slotStart = parseTimeToMinutes(slot);
       const slotEnd = parseTimeToMinutes(getEndTimeForSlot(pitchId, date, slot, bookingType));
 
@@ -566,15 +573,13 @@ export default function BookingModal({
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 Booking Date
               </label>
-              <div className="relative">
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2 px-3 text-slate-800 font-medium focus:border-blue-900 focus:outline-none"
-                  required
-                />
-              </div>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2 px-3 text-slate-800 font-medium focus:border-blue-900 focus:outline-none"
+                required
+              />
             </div>
 
             {/* Timing Select / Inputs */}

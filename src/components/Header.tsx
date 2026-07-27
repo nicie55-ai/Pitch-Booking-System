@@ -67,14 +67,16 @@ export default function Header({ currentUser, onOpenLoginModal }: HeaderProps) {
               </div>
             </div>
 
-            <button
-              onClick={onOpenLoginModal}
-              className="flex items-center space-x-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider transition-all shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
-              title="Log into another account"
-            >
-              <LogOut className="w-4 h-4 text-slate-950" />
-              <span>Switch Account</span>
-            </button>
+            {currentUser.role === 'ADMIN' && (
+              <button
+                onClick={onOpenLoginModal}
+                className="flex items-center space-x-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider transition-all shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+                title="Log into another account"
+              >
+                <LogOut className="w-4 h-4 text-slate-950" />
+                <span>Switch Account</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

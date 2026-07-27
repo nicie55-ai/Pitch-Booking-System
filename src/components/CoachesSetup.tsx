@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { User, PitchSize, ClubTeam } from '../types';
 import { SCOTTER_TEAMS } from '../mockData';
+import { sortTeamsByAge, sortUsersByTeamAge } from '../utils/bookingUtils';
 
 interface CoachesSetupProps {
   users: User[];
@@ -525,7 +526,7 @@ export default function CoachesSetup({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
-              {teams.map((team) => {
+              {sortTeamsByAge(teams).map((team) => {
                 const assignedCoaches = users.filter((u) => u.teamName === team.name);
                 const isEditingThis = editingTeamName === team.name;
 
@@ -735,7 +736,7 @@ export default function CoachesSetup({
                       className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2.5 px-3 text-slate-800 font-semibold focus:border-blue-900 focus:outline-none transition-colors"
                     >
                       <option value="">-- None / Unassigned --</option>
-                      {teams.map((t) => (
+                      {sortTeamsByAge(teams).map((t) => (
                         <option key={t.name} value={t.name}>
                           {t.name} ({t.pitchSize})
                         </option>
@@ -841,7 +842,7 @@ export default function CoachesSetup({
                         className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2.5 px-3 text-slate-800 font-semibold focus:border-blue-900 focus:outline-none transition-colors disabled:opacity-50"
                       >
                         <option value="">-- None / Unassigned --</option>
-                        {teams.map((t) => (
+                        {sortTeamsByAge(teams).map((t) => (
                           <option key={t.name} value={t.name}>
                             {t.name} ({t.pitchSize})
                           </option>
@@ -990,7 +991,7 @@ export default function CoachesSetup({
             </h3>
             
             <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-              {users.map((u) => {
+              {sortUsersByTeamAge(users).map((u) => {
                 const isEditingThisUser = editingUserId === u.id;
 
                 if (isEditingThisUser) {
@@ -1036,7 +1037,7 @@ export default function CoachesSetup({
                             className="w-full bg-white border border-slate-300 rounded-lg py-1.5 px-2.5 font-bold text-slate-800"
                           >
                             <option value="">-- None / Unassigned --</option>
-                            {teams.map((t) => (
+                            {sortTeamsByAge(teams).map((t) => (
                               <option key={t.name} value={t.name}>
                                 {t.name} ({t.pitchSize})
                               </option>

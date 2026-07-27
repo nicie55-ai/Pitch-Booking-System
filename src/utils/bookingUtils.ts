@@ -44,6 +44,51 @@ export function isTeamMatch(userTeam?: string, bookingTeam?: string): boolean {
 }
 
 /**
+ * Extracts numeric age rank from a team name string (e.g. "U7" -> 7, "U12 Girls" -> 12.5, "U14" -> 14).
+ */
+export function getTeamAgeRank(teamNameStr?: string): number {
+  if (!teamNameStr) return 999;
+  const str = teamNameStr.trim().toUpperCase();
+  const match = str.match(/U(\d+)/i);
+  if (match) {
+    let rank = parseInt(match[1], 10);
+    if (str.includes('GIRLS')) {
+      rank += 0.5;
+    }
+    return rank;
+  }
+  if (str.includes('VET') || str.includes('VETERAN')) return 900;
+  if (str.includes('SENIOR') || str.includes('ADULT')) return 950;
+  return 800;
+}
+
+/**
+ * Sorts array of teams by age order starting from U7 up to U14+.
+ */
+export function sortTeamsByAge<T extends { name: string; category?: string }>(teams: T[]): T[] {
+  return [...teams].sort((a, b) => {
+    const rankA = getTeamAgeRank(a.name || a.category);
+    const rankB = getTeamAgeRank(b.name || b.category);
+    if (rankA !== rankB) return rankA - rankB;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+}
+
+/**
+ * Sorts users/coaches by role (ADMIN first) then by assigned team age rank (U7 -> U14).
+ */
+export function sortUsersByTeamAge(users: User[]): User[] {
+  return [...users].sort((a, b) => {
+    if (a.role === 'ADMIN' && b.role !== 'ADMIN') return -1;
+    if (a.role !== 'ADMIN' && b.role === 'ADMIN') return 1;
+    const rankA = getTeamAgeRank(a.teamName);
+    const rankB = getTeamAgeRank(b.teamName);
+    if (rankA !== rankB) return rankA - rankB;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+/**
  * Checks if a manager has permission to unbook/cancel a booking.
  * - Admins can cancel anything.
  * - Managers can cancel bookings they created.

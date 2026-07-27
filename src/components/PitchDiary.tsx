@@ -123,15 +123,15 @@ export default function PitchDiary({
     (b) => currentUser.role === 'MANAGER' && b.managerId === currentUser.id && b.status === BookingStatus.DECLINED
   );
 
-  const handlePrevDay = () => {
+  const handlePrevWeek = () => {
     const prev = new Date(selectedDate);
-    prev.setDate(prev.getDate() - 1);
+    prev.setDate(prev.getDate() - 7);
     setSelectedDate(prev.toISOString().split('T')[0]);
   };
 
-  const handleNextDay = () => {
+  const handleNextWeek = () => {
     const next = new Date(selectedDate);
-    next.setDate(next.getDate() + 1);
+    next.setDate(next.getDate() + 7);
     setSelectedDate(next.toISOString().split('T')[0]);
   };
 
@@ -318,10 +318,9 @@ export default function PitchDiary({
 
   const WEEKEND_PREBOOKED_BLOCKS: Record<string, Array<{ start: string; end: string }>> = {
     '3v3': [
-      { start: '09:00', end: '10:00' },
-      { start: '10:00', end: '11:00' },
-      { start: '11:00', end: '12:00' },
-      { start: '12:00', end: '13:00' },
+      { start: '09:30', end: '10:45' },
+      { start: '10:45', end: '12:00' },
+      { start: '12:00', end: '13:15' },
     ],
     '5v5': [
       { start: '09:45', end: '10:45' },
@@ -348,7 +347,7 @@ export default function PitchDiary({
     const d = new Date(dateStr);
     const day = d.getDay();
     if (day === 0) { // Sunday
-      if (pitchId === '5v5' || pitchId === '7v7') {
+      if (pitchId === '5v5' || pitchId === '7v7' || pitchId === '3v3') {
         return [];
       }
     }
@@ -420,8 +419,9 @@ export default function PitchDiary({
             </p>
           </div>
         </div>
-        <div className="bg-white/85 border border-blue-200/50 px-3 py-1.5 rounded-lg text-[11px] font-bold text-blue-950 uppercase tracking-wide whitespace-nowrap shadow-sm">
-          📍 Facility: Scotter (DN21 3RL)
+        <div className="bg-white/85 border border-emerald-200/60 px-3.5 py-1.5 rounded-lg text-[11px] font-bold text-slate-900 uppercase tracking-wide whitespace-nowrap shadow-sm flex items-center gap-1.5">
+          <MapPin className="w-4 h-4 text-emerald-600 fill-emerald-100 flex-shrink-0" />
+          <span>War Memorial Playing Fields</span>
         </div>
       </div>
 
@@ -527,7 +527,9 @@ export default function PitchDiary({
             </div>
             <div>
               <h2 className="text-xl font-bold text-slate-900">{dayName}, {dayString}</h2>
-              <p className="text-xs text-slate-500 font-medium">View other kickoff slots or select a different date from the timeline</p>
+              <p className="text-xs text-blue-900 font-bold mt-0.5">
+                Week: {weekDates[0]?.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – {weekDates[6]?.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+              </p>
             </div>
           </div>
 
@@ -541,17 +543,19 @@ export default function PitchDiary({
             
             <div className="flex space-x-1 bg-slate-50 border-2 border-slate-200 p-1 rounded-lg">
               <button
-                onClick={handlePrevDay}
-                className="hover:bg-white text-slate-700 p-1.5 rounded transition-colors"
-                title="Previous Day"
+                onClick={handlePrevWeek}
+                className="hover:bg-white text-slate-700 px-2.5 py-1.5 rounded transition-colors flex items-center space-x-1 text-xs font-extrabold"
+                title="Previous Week"
               >
                 <ArrowLeft className="w-4 h-4" />
+                <span className="hidden sm:inline">Prev Week</span>
               </button>
               <button
-                onClick={handleNextDay}
-                className="hover:bg-white text-slate-700 p-1.5 rounded transition-colors"
-                title="Next Day"
+                onClick={handleNextWeek}
+                className="hover:bg-white text-slate-700 px-2.5 py-1.5 rounded transition-colors flex items-center space-x-1 text-xs font-extrabold"
+                title="Next Week"
               >
+                <span className="hidden sm:inline">Next Week</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
