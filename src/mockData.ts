@@ -7,77 +7,80 @@ import { Booking, BookingStatus, PitchConfig, SlotChangeRequest, User, PitchSize
 
 const RAW_MOCK_USERS: User[] = [
   {
-    id: 'admin-nicolien',
-    name: 'NicolienL',
+    id: 'admin-scotteradmin',
+    name: 'ScotterAdmin',
     role: 'ADMIN',
-    password: 'ScotterNL2026',
+    teamName: 'Club Admin',
+    password: 'SUJFC26',
   },
-  // U7
+  {
+    id: 'admin-waynef',
+    name: 'WayneF',
+    role: 'ADMIN',
+    teamName: 'U18',
+    password: 'ScotterWF18',
+  },
   {
     id: 'coach-karlm',
     name: 'KarlM',
     role: 'MANAGER',
-    teamName: 'U7',
+    teamName: 'U7 Juniors',
     password: 'ScotterKM7',
   },
   {
     id: 'coach-dans',
     name: 'DanS',
     role: 'MANAGER',
-    teamName: 'U7',
+    teamName: 'U7 Saints',
     password: 'ScotterDS7',
   },
-  // U8
   {
     id: 'coach-philc',
     name: 'PhilC',
     role: 'MANAGER',
-    teamName: 'U8',
+    teamName: 'U8 Juniors',
     password: 'ScotterPC8',
   },
   {
     id: 'coach-dannyr',
     name: 'DannyR',
     role: 'MANAGER',
-    teamName: 'U8',
+    teamName: 'U8 Saints',
     password: 'ScotterDR8',
   },
-  // U9
   {
     id: 'coach-mitchg',
     name: 'MitchG',
     role: 'MANAGER',
-    teamName: 'U9',
+    teamName: 'U9 Juniors',
     password: 'ScotterMG9',
   },
   {
     id: 'coach-tomc',
     name: 'TomC',
     role: 'MANAGER',
-    teamName: 'U9',
+    teamName: 'U9 Saints',
     password: 'ScotterTC9',
   },
-  // U10
   {
     id: 'coach-marke',
     name: 'MarkE',
     role: 'MANAGER',
-    teamName: 'U10',
+    teamName: 'U10 Juniors',
     password: 'ScotterME10',
   },
   {
     id: 'coach-annaw',
     name: 'AnnaW',
     role: 'MANAGER',
-    teamName: 'U10',
+    teamName: 'U10 Saints',
     password: 'ScotterAW10',
   },
-  // U11
   {
     id: 'coach-olig',
     name: 'OliG',
     role: 'MANAGER',
-    teamName: 'U11',
+    teamName: 'U11 Juniors',
     password: 'ScotterOG11',
   },
   {
@@ -87,64 +90,75 @@ const RAW_MOCK_USERS: User[] = [
     teamName: 'U11 Saints',
     password: 'ScotterCW11',
   },
-  // U12
   {
-    id: 'coach-liamw',
-    name: 'LiamW',
-    role: 'MANAGER',
-    teamName: 'U12',
-    password: 'ScotterLW12',
+    id: 'admin-adamh',
+    name: 'AdamH',
+    role: 'ADMIN',
+    teamName: 'U12 Colts',
+    password: 'ScotterAH12',
   },
   {
-    id: 'coach-adamh',
-    name: 'AdamH',
-    role: 'MANAGER',
-    teamName: 'U12',
-    password: 'ScotterAH12',
+    id: 'admin-liamw',
+    name: 'LiamW',
+    role: 'ADMIN',
+    teamName: 'U12 Juniors',
+    password: 'ScotterLW12',
   },
   {
     id: 'coach-sarahs',
     name: 'SarahS',
     role: 'MANAGER',
-    teamName: 'U12',
+    teamName: 'U12 Girls',
     password: 'ScotterSS12',
   },
-  // U13
   {
     id: 'coach-dana',
     name: 'DanA',
     role: 'MANAGER',
-    teamName: 'U13',
+    teamName: 'U13 Juniors',
     password: 'ScotterDA13',
   },
   {
     id: 'coach-paulh',
     name: 'PaulH',
     role: 'MANAGER',
-    teamName: 'U13',
+    teamName: 'U13 Saints',
     password: 'ScotterPH13',
   },
-  // U14
   {
     id: 'coach-paulf',
     name: 'PaulF',
     role: 'MANAGER',
-    teamName: 'U14',
+    teamName: 'U14s',
     password: 'ScotterPF14',
   },
   {
     id: 'coach-gavd',
     name: 'GavD',
     role: 'MANAGER',
-    teamName: 'U14',
+    teamName: 'U14 Girls',
     password: 'ScotterGD14',
   },
-  // Kept coach (unassigned as U18 team was removed)
   {
-    id: 'coach-waynef',
-    name: 'WayneF',
+    id: 'coach-chriss',
+    name: 'ChrisS',
     role: 'MANAGER',
-    password: 'ScotterWF18',
+    teamName: 'Vets',
+    password: 'ScotterCS1',
+  },
+  {
+    id: 'coach-andyc',
+    name: 'AndyC',
+    role: 'MANAGER',
+    teamName: 'U15',
+    password: 'ScotterAC15',
+  },
+  {
+    id: 'coach-willc',
+    name: 'WillC',
+    role: 'MANAGER',
+    teamName: 'U17',
+    password: 'ScotterWC17',
   },
 ];
 
@@ -152,31 +166,31 @@ export const DEFAULT_PITCH_CONFIGS: PitchConfig[] = [
   {
     id: '3v3',
     name: '3v3',
-    description: 'Mini pitch for Toddlers and Under 6s fun-football sessions.',
+    description: 'Mini pitch for Under 7s fun-football sessions (2026-27 FA guidelines).',
     defaultSlots: ['09:30', '10:45', '12:00', '13:15'],
   },
   {
     id: '5v5',
     name: '5v5',
-    description: 'Perfect for Under 7s and Under 8s matches.',
+    description: 'Designed for Under 8s and Under 9s matches (2026-27 FA guidelines).',
     defaultSlots: ['09:45', '10:45', '11:45'],
   },
   {
     id: '7v7',
     name: '7v7',
-    description: 'Designed for Under 9s and Under 10s age groups.',
+    description: 'Designed for Under 10s and Under 11s age groups (2026-27 FA guidelines).',
     defaultSlots: ['09:30', '10:45', '12:00', '13:15'],
   },
   {
     id: '9v9',
     name: '9v9',
-    description: 'Designed for Under 11s and Under 12s age groups.',
+    description: 'Designed for Under 12s and Under 13s age groups (2026-27 FA guidelines).',
     defaultSlots: ['09:30', '11:00', '12:30'],
   },
   {
     id: '11v11',
     name: '11v11',
-    description: 'Full-size pitch for Under 13s to Adults.',
+    description: 'Full-size pitch for Under 14s to Adults.',
     defaultSlots: ['10:00', '12:00', '14:00', '16:00'],
   },
 ];
@@ -251,28 +265,28 @@ const RAW_INITIAL_SLOT_CHANGES: SlotChangeRequest[] = [
 ];
 
 const RAW_SCOTTER_TEAMS: Omit<ClubTeam, 'id'>[] = [
-  // U7s
-  { name: 'Scotter United U7 Juniors', category: 'U7s', pitchSize: '5v5' },
-  { name: 'Scotter United U7 Saints', category: 'U7s', pitchSize: '5v5' },
-  // U8s
+  // U7s - 3v3
+  { name: 'Scotter United U7 Juniors', category: 'U7s', pitchSize: '3v3' },
+  { name: 'Scotter United U7 Saints', category: 'U7s', pitchSize: '3v3' },
+  // U8s - 5v5
   { name: 'Scotter United U8 Juniors', category: 'U8s', pitchSize: '5v5' },
   { name: 'Scotter United U8 Saints', category: 'U8s', pitchSize: '5v5' },
-  // U9s
-  { name: 'Scotter United U9 Saints', category: 'U9s', pitchSize: '7v7' },
-  { name: 'Scotter United U9s Juniors', category: 'U9s', pitchSize: '7v7' },
-  // U10s
+  // U9s - 5v5
+  { name: 'Scotter United U9 Saints', category: 'U9s', pitchSize: '5v5' },
+  { name: 'Scotter United U9s Juniors', category: 'U9s', pitchSize: '5v5' },
+  // U10s - 7v7
   { name: 'Scotter United U10 Saints', category: 'U10s', pitchSize: '7v7' },
   { name: 'Scotter United U10 Juniors', category: 'U10s', pitchSize: '7v7' },
-  // U11s
-  { name: 'Scotter United U11 Colts', category: 'U11s', pitchSize: '9v9' },
-  { name: 'Scotter United U11s Juniors', category: 'U11s', pitchSize: '9v9' },
-  // U12s
+  // U11s - 7v7
+  { name: 'Scotter United U11 Colts', category: 'U11s', pitchSize: '7v7' },
+  { name: 'Scotter United U11s Juniors', category: 'U11s', pitchSize: '7v7' },
+  // U12s - 9v9
   { name: 'Scotter United U12s Juniors', category: 'U12', pitchSize: '9v9' },
   { name: 'Scotter United U12 Colts', category: 'U12', pitchSize: '9v9' },
-  // U13s
-  { name: 'Scotter United U13 Saints', category: 'U13', pitchSize: '11v11' },
-  { name: 'Scotter United U13 Juniors', category: 'U13', pitchSize: '11v11' },
-  // Senior formats
+  // U13s - 9v9
+  { name: 'Scotter United U13 Saints', category: 'U13', pitchSize: '9v9' },
+  { name: 'Scotter United U13 Juniors', category: 'U13', pitchSize: '9v9' },
+  // Senior formats - 11v11
   { name: 'Scotter United U14s', category: 'U14', pitchSize: '11v11' },
   // Girls
   { name: 'Scotter United U12 Girls', category: 'U12 Girls', pitchSize: '9v9' },

@@ -129,19 +129,46 @@ export default function App() {
     localStorage.setItem('scotter_jfc_teams', JSON.stringify(teams));
   }, [teams]);
 
-  const [currentUser, setCurrentUser] = useState<UserType>(() => {
+  const [currentUser, setCurrentUser] = useState<UserType | null>(() => {
     const saved = localStorage.getItem('scotter_jfc_current_user');
-    // Default to Paul Scholes (U9 Manager) to give a nice interactive starting point
-    const parsed: UserType = saved ? JSON.parse(saved) : MOCK_USERS[1];
-    if (parsed && parsed.teamName) {
-      parsed.teamName = parsed.teamName.replace('Scotter United ', '');
+    if (!saved) return null;
+    try {
+      const parsed: UserType = JSON.parse(saved);
+      if (parsed && parsed.teamName) {
+        parsed.teamName = parsed.teamName.replace('Scotter United ', '');
+      }
+      return parsed;
+    } catch {
+      return null;
     }
-    return parsed;
   });
+
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem('scotter_jfc_current_user', JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem('scotter_jfc_current_user');
+    }
+  }, [currentUser]);
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('scotter_jfc_current_user');
+    setIsLoginModalOpen(true);
+  };
 
   // Default Selected Date: Current week (dynamically shifted relative to today)
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [activeTab, setActiveTab] = useState<'DIARY' | 'REQUESTS' | 'SLOTS' | 'COACHES'>('DIARY');
+
+  // Protect Admin-only tabs
+  useEffect(() => {
+    if (currentUser && currentUser.role !== 'ADMIN') {
+      if (activeTab === 'SLOTS' || activeTab === 'COACHES') {
+        setActiveTab('DIARY');
+      }
+    }
+  }, [currentUser, activeTab]);
 
   // Booking Modal States
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
@@ -234,7 +261,7 @@ export default function App() {
     setUsers(nextUsers);
     syncUsersListToFirestore(nextUsers).catch(console.error);
 
-    if (currentUser.teamName === oldName) {
+    if (currentUser && currentUser.teamName === oldName) {
       const updatedSelf = { ...currentUser, teamName: newName };
       setCurrentUser(updatedSelf);
       saveUserToFirestore(updatedSelf).catch(console.error);
@@ -254,9 +281,10 @@ export default function App() {
       const newCategory = t.category.replace(/U\d+/i, `U${nextAge}`).replace(/Under\s*\d+/i, `U${nextAge}`);
 
       let newPitchSize: PitchSize = t.pitchSize;
-      if (nextAge <= 8) newPitchSize = '5v5';
-      else if (nextAge <= 10) newPitchSize = '7v7';
-      else if (nextAge <= 12) newPitchSize = '9v9';
+      if (nextAge <= 7) newPitchSize = '3v3';
+      else if (nextAge <= 9) newPitchSize = '5v5';
+      else if (nextAge <= 11) newPitchSize = '7v7';
+      else if (nextAge <= 13) newPitchSize = '9v9';
       else newPitchSize = '11v11';
 
       teamNameMap[t.name] = newName;
@@ -398,7 +426,7 @@ export default function App() {
       });
     }
 
-    const newStatus = currentUser.role === 'ADMIN' ? BookingStatus.APPROVED : BookingStatus.PENDING;
+    const newStatus = currentUser?.role === 'ADMIN' ? BookingStatus.APPROVED : BookingStatus.PENDING;
 
     if (targetFaFixture) {
       const matchedFixtureId = targetFaFixture.id;
@@ -690,64 +718,9 @@ export default function App() {
     }
   };
 
-  // Auto-cleanup requested team/user removals if they exist in Firestore/LocalStorage
-  useEffect(() => {
-    if (!teams || !users || teams.length === 0 || users.length === 0) return;
-
-    let teamsChanged = false;
-    let usersChanged = false;
-
-    const forbiddenCategories = ['U15', 'U17', 'U18', 'Veterans', 'Vets'];
-    const forbiddenTeamNames = ['Scotter United U15s', 'Scotter United U17s', 'Scotter United U18s', 'Scotter United Veterans'];
-
-    const cleanedTeams = teams.filter((t) => {
-      const isForbidden = forbiddenCategories.includes(t.category) || forbiddenTeamNames.some((fn) => t.name.toLowerCase().includes(fn.toLowerCase()));
-      if (isForbidden) teamsChanged = true;
-      return !isForbidden;
-    });
-
-    const forbiddenCoachNames = ['Sarah Jenkins', 'AndyC', 'WillC'];
-
-    const cleanedUsers = users
-      .map((u) => {
-        if (u.name.toLowerCase().includes('waynef') && u.teamName && (u.teamName.includes('U18') || u.teamName.includes('18'))) {
-          usersChanged = true;
-          return { ...u, teamName: undefined };
-        }
-        return u;
-      })
-      .filter((u) => {
-        const isForbidden = forbiddenCoachNames.some((fn) => u.name.toLowerCase().includes(fn.toLowerCase()));
-        if (isForbidden) usersChanged = true;
-        return !isForbidden;
-      });
-
-    if (teamsChanged) {
-      setTeams(cleanedTeams);
-      syncTeamsListToFirestore(cleanedTeams).catch(console.error);
-    }
-
-    if (usersChanged) {
-      setUsers(cleanedUsers);
-      syncUsersListToFirestore(cleanedUsers).catch(console.error);
-    }
-  }, [teams, users]);
-
-  // Clear local storage to reset to pristine mock state
-  const handleResetApp = () => {
-    localStorage.removeItem('scotter_jfc_bookings');
-    localStorage.removeItem('scotter_jfc_pitch_configs');
-    localStorage.removeItem('scotter_jfc_slot_changes');
-    localStorage.removeItem('scotter_jfc_current_user');
-    localStorage.removeItem('scotter_jfc_users');
-    localStorage.removeItem('scotter_jfc_teams');
-    window.location.reload();
-  };
 
   // Count pending bookings for indicator badge
   const pendingBookingsCount = bookings.filter((b) => b.status === BookingStatus.PENDING).length;
-  // Count pending slot changes for indicator badge
-  const pendingSlotChangesCount = slotChangeRequests.filter((r) => r.status === 'PENDING').length;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-blue-200">
@@ -757,35 +730,44 @@ export default function App() {
         currentUser={currentUser}
         users={users}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
+        onLogout={handleLogout}
       />
 
       {/* Role Indicator Info Banner */}
-      <div className="bg-blue-900 text-white border-b border-blue-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs md:text-sm">
-          <div className="flex items-center space-x-2">
-            <span className="bg-white/20 text-white font-extrabold px-2 py-0.5 rounded text-[10px] uppercase tracking-wide">
-              {currentUser.role} View
-            </span>
-            <span>
-              {currentUser.role === 'ADMIN' ? (
-                <>Logged in as <strong>Sarah Jenkins (Admin)</strong>. You can approve/decline pitch bookings and manage kickoff slots.</>
-              ) : (
-                <>Logged in as <strong>{currentUser.name}</strong>, managing <strong>{currentUser.teamName}</strong>. Book match & training times.</>
-              )}
-            </span>
-          </div>
-          {currentUser.role === 'ADMIN' && (
+      {currentUser && (
+        <div className="bg-blue-900 text-white border-b border-blue-800">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs md:text-sm">
             <div className="flex items-center space-x-2">
+              <span className="bg-white/20 text-white font-extrabold px-2 py-0.5 rounded text-[10px] uppercase tracking-wide">
+                {currentUser.role} View
+              </span>
+              <span>
+                {currentUser.role === 'ADMIN' ? (
+                  <>Logged in as <strong>{currentUser.name} (Admin)</strong>. You can approve/decline pitch bookings and manage kickoff slots.</>
+                ) : (
+                  <>Logged in as <strong>{currentUser.name}</strong>{currentUser.teamName ? <>, managing <strong>{currentUser.teamName}</strong></> : null}. Book match & training times.</>
+                )}
+              </span>
+            </div>
+            <div className="flex items-center space-x-2">
+              {currentUser.role === 'ADMIN' && (
+                <button
+                  onClick={() => setIsLoginModalOpen(true)}
+                  className="bg-white text-blue-900 font-bold px-3 py-1 rounded-lg hover:bg-slate-100 transition-colors text-xs uppercase tracking-wider cursor-pointer"
+                >
+                  Switch Account
+                </button>
+              )}
               <button
-                onClick={() => setIsLoginModalOpen(true)}
-                className="bg-white text-blue-900 font-bold px-3 py-1 rounded-lg hover:bg-slate-100 transition-colors text-xs uppercase tracking-wider"
+                onClick={handleLogout}
+                className="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-1 rounded-lg transition-colors text-xs uppercase tracking-wider cursor-pointer"
               >
-                Log In / Switch Coach Account
+                Log Out
               </button>
             </div>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Main Content Area */}
       <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -821,101 +803,125 @@ export default function App() {
             )}
           </button>
 
-          <button
-            onClick={() => setActiveTab('SLOTS')}
-            className={`flex items-center space-x-2 py-3 px-5 border-b-4 font-bold text-sm tracking-tight transition-all relative whitespace-nowrap ${
-              activeTab === 'SLOTS'
-                ? 'border-blue-900 text-blue-900'
-                : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
-            }`}
-          >
-            <Settings className="w-4 h-4" />
-            <span>Slot Settings</span>
-          </button>
+          {/* Slot Settings - ADMIN ONLY */}
+          {currentUser?.role === 'ADMIN' && (
+            <button
+              onClick={() => setActiveTab('SLOTS')}
+              className={`flex items-center space-x-2 py-3 px-5 border-b-4 font-bold text-sm tracking-tight transition-all relative whitespace-nowrap ${
+                activeTab === 'SLOTS'
+                  ? 'border-blue-900 text-blue-900'
+                  : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+              }`}
+            >
+              <Settings className="w-4 h-4" />
+              <span>Slot Settings</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setActiveTab('COACHES')}
-            className={`flex items-center space-x-2 py-3 px-5 border-b-4 font-bold text-sm tracking-tight transition-all relative whitespace-nowrap ${
-              activeTab === 'COACHES'
-                ? 'border-blue-900 text-blue-900'
-                : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
-            }`}
-          >
-            <User className="w-4 h-4" />
-            <span>Coaches & Profiles</span>
-          </button>
+          {/* Coaches & Profiles - ADMIN ONLY */}
+          {currentUser?.role === 'ADMIN' && (
+            <button
+              onClick={() => setActiveTab('COACHES')}
+              className={`flex items-center space-x-2 py-3 px-5 border-b-4 font-bold text-sm tracking-tight transition-all relative whitespace-nowrap ${
+                activeTab === 'COACHES'
+                  ? 'border-blue-900 text-blue-900'
+                  : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+              }`}
+            >
+              <User className="w-4 h-4" />
+              <span>Coaches & Profiles</span>
+            </button>
+          )}
         </div>
 
         {/* Dynamic Tab Panel */}
         <div className="space-y-6">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeTab}
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.15 }}
-            >
-              {activeTab === 'DIARY' && (
-                <PitchDiary
-                  selectedDate={selectedDate}
-                  setSelectedDate={setSelectedDate}
-                  pitchConfigs={pitchConfigs}
-                  bookings={bookings}
-                  currentUser={currentUser}
-                  onRequestBooking={handleOpenBookingModal}
-                  onApproveBooking={handleApproveBooking}
-                  onDeclineBooking={handleDeclineBooking}
-                  onCancelBooking={handleCancelBooking}
-                  onAddBookingsBulk={handleAddBookingsBulk}
-                  onUpdateBooking={handleUpdateBooking}
-                  users={users}
-                  onUpdateUsers={handleUpdateUsers}
-                  faFixtures={faFixtures}
-                  onUpdateFaFixtures={handleUpdateFaFixtures}
-                  onClearAllBookings={handleClearAllBookings}
-                />
-              )}
+          {currentUser ? (
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeTab}
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.15 }}
+              >
+                {activeTab === 'DIARY' && (
+                  <PitchDiary
+                    selectedDate={selectedDate}
+                    setSelectedDate={setSelectedDate}
+                    pitchConfigs={pitchConfigs}
+                    bookings={bookings}
+                    currentUser={currentUser}
+                    onRequestBooking={handleOpenBookingModal}
+                    onApproveBooking={handleApproveBooking}
+                    onDeclineBooking={handleDeclineBooking}
+                    onCancelBooking={handleCancelBooking}
+                    onAddBookingsBulk={handleAddBookingsBulk}
+                    onUpdateBooking={handleUpdateBooking}
+                    users={users}
+                    onUpdateUsers={handleUpdateUsers}
+                    faFixtures={faFixtures}
+                    onUpdateFaFixtures={handleUpdateFaFixtures}
+                    onClearAllBookings={handleClearAllBookings}
+                  />
+                )}
 
-              {activeTab === 'REQUESTS' && (
-                <RequestManager
-                  bookings={bookings}
-                  currentUser={currentUser}
-                  onApproveBooking={handleApproveBooking}
-                  onDeclineBooking={handleDeclineBooking}
-                  onCancelBooking={handleCancelBooking}
-                />
-              )}
+                {activeTab === 'REQUESTS' && (
+                  <RequestManager
+                    bookings={bookings}
+                    currentUser={currentUser}
+                    onApproveBooking={handleApproveBooking}
+                    onDeclineBooking={handleDeclineBooking}
+                    onCancelBooking={handleCancelBooking}
+                  />
+                )}
 
-              {activeTab === 'SLOTS' && (
-                <SlotConfigurator
-                  pitchConfigs={pitchConfigs}
-                  currentUser={currentUser}
-                  onUpdatePitchSlots={handleUpdatePitchSlots}
-                />
-              )}
+                {activeTab === 'SLOTS' && currentUser.role === 'ADMIN' && (
+                  <SlotConfigurator
+                    pitchConfigs={pitchConfigs}
+                    currentUser={currentUser}
+                    onUpdatePitchSlots={handleUpdatePitchSlots}
+                  />
+                )}
 
-              {activeTab === 'COACHES' && (
-                <CoachesSetup
-                  users={users}
-                  onUpdateUsers={handleUpdateUsers}
-                  currentUser={currentUser}
-                  onUpdateCurrentUser={handleUpdateCurrentUser}
-                  teams={teams}
-                  onUpdateTeams={handleUpdateTeams}
-                  onRenameTeam={handleRenameTeam}
-                  onPromoteToNextSeason={handlePromoteToNextSeason}
-                />
-              )}
-            </motion.div>
-          </AnimatePresence>
+                {activeTab === 'COACHES' && currentUser.role === 'ADMIN' && (
+                  <CoachesSetup
+                    users={users}
+                    onUpdateUsers={handleUpdateUsers}
+                    currentUser={currentUser}
+                    onUpdateCurrentUser={handleUpdateCurrentUser}
+                    teams={teams}
+                    onUpdateTeams={handleUpdateTeams}
+                    onRenameTeam={handleRenameTeam}
+                    onPromoteToNextSeason={handlePromoteToNextSeason}
+                  />
+                )}
+              </motion.div>
+            </AnimatePresence>
+          ) : (
+            <div className="bg-white border-2 border-slate-200 rounded-3xl p-12 text-center max-w-lg mx-auto space-y-4 shadow-sm my-12">
+              <div className="w-16 h-16 bg-blue-50 text-blue-900 rounded-2xl mx-auto flex items-center justify-center font-black text-2xl border border-blue-200 shadow-sm">
+                ⚽
+              </div>
+              <h3 className="text-xl font-black text-slate-900 tracking-tight">Login Required</h3>
+              <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                Please log in with your coach or administrator account to view pitch schedules and submit booking requests.
+              </p>
+              <button
+                onClick={() => setIsLoginModalOpen(true)}
+                className="bg-blue-900 hover:bg-blue-800 text-white font-extrabold px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md cursor-pointer"
+              >
+                Log In Now
+              </button>
+            </div>
+          )}
         </div>
       </main>
 
       {/* Helper FAQ & Notice Footer */}
       <footer className="bg-white border-t border-slate-200 py-10 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {/* Quick Rules */}
             <div className="space-y-2">
               <h4 className="text-sm font-bold text-blue-900 uppercase tracking-wider flex items-center">
@@ -931,38 +937,20 @@ export default function App() {
             <div className="space-y-2">
               <h4 className="text-sm font-bold text-blue-900 uppercase tracking-wider flex items-center">
                 <HelpCircle className="w-4 h-4 mr-1.5" />
-                <span>Youth Guidelines</span>
+                <span>Youth Guidelines (2026-27 FA Guidelines)</span>
               </h4>
-              <ul className="text-xs text-slate-500 space-y-1 list-disc list-inside">
-                <li>5v5 format is reserved strictly for U7s and U8s teams.</li>
-                <li>7v7 matches accommodate U9s and U10s leagues.</li>
-                <li>9v9 pitch hosts U11s and U12s fixtures.</li>
-                <li>11v11 Main Pitch is shared by U13s to Adult squads.</li>
+              <ul className="text-xs text-slate-500 space-y-1 list-disc list-inside font-medium">
+                <li>3v3 format is for U7s fun-football sessions.</li>
+                <li>5v5 format is reserved for U8s and U9s teams.</li>
+                <li>7v7 format accommodates U10s and U11s leagues.</li>
+                <li>9v9 pitch hosts U12s and U13s fixtures.</li>
+                <li>11v11 Main Pitch is shared by U14s to Adult squads.</li>
               </ul>
-            </div>
-
-            {/* System Options */}
-            <div className="space-y-3">
-              <h4 className="text-sm font-bold text-blue-900 uppercase tracking-wider">
-                System Utilities
-              </h4>
-              <div className="flex flex-col space-y-2">
-                <button
-                  onClick={handleResetApp}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2 px-3 rounded-lg text-center transition-colors self-start border border-slate-200"
-                >
-                  Reset Club Data to Default
-                </button>
-                <p className="text-[10px] text-slate-400">
-                  Clears local storage persistence and loads pre-populated match bookings.
-                </p>
-              </div>
             </div>
           </div>
 
           <div className="border-t border-slate-100 mt-8 pt-6 flex flex-col sm:flex-row justify-between items-center text-[11px] text-slate-400 font-semibold uppercase tracking-wider">
             <span>© 2026 Scotter United Junior Football Club. All Rights Reserved.</span>
-            <span>Est. 1978 • Royal Blue & White Pride</span>
           </div>
         </div>
       </footer>
@@ -1027,11 +1015,13 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
       {/* Login / Switch Account Modal */}
       <AnimatePresence>
-        {isLoginModalOpen && (
+        {(!currentUser || isLoginModalOpen) && (
           <LoginModal
-            isOpen={isLoginModalOpen}
+            isOpen={!currentUser || isLoginModalOpen}
+            isForced={!currentUser}
             onClose={() => setIsLoginModalOpen(false)}
             users={users}
             onLoginSuccess={(loggedInUser) => {

@@ -64,6 +64,16 @@ export function subscribeToFirestoreData(callbacks: {
       await batch.commit();
     } else {
       const usersList: User[] = snapshot.docs.map((d) => d.data() as User);
+      // Auto-upsert any missing default user accounts into Firestore
+      const existingIds = new Set(usersList.map((u) => u.id));
+      const missingUsers = MOCK_USERS.filter((u) => !existingIds.has(u.id));
+      if (missingUsers.length > 0) {
+        const batch = writeBatch(db);
+        missingUsers.forEach((u) => {
+          batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
+        });
+        await batch.commit();
+      }
       callbacks.onUsersUpdate(usersList);
     }
   }, (err) => console.error('Error listening to users collection:', err));

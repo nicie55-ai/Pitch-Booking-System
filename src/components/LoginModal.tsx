@@ -16,6 +16,7 @@ interface LoginModalProps {
   users: User[];
   onLoginSuccess: (user: User) => void;
   onUpdateUserEmail: (userId: string, email: string) => void;
+  isForced?: boolean;
 }
 
 export default function LoginModal({
@@ -24,6 +25,7 @@ export default function LoginModal({
   users,
   onLoginSuccess,
   onUpdateUserEmail,
+  isForced = false,
 }: LoginModalProps) {
   const [activeTab, setActiveTab] = useState<'password' | 'sso'>('password');
 
@@ -132,8 +134,12 @@ export default function LoginModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs">
-      <AnimatePresence mode="wait">
+    <div
+      onClick={isForced ? undefined : onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs overflow-y-auto"
+    >
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md">
+        <AnimatePresence mode="wait">
         {loggedInUserForEmailPrompt ? (
           /* STEP 2: Link Google Email Prompt */
           <motion.div
@@ -200,13 +206,15 @@ export default function LoginModal({
             exit={{ opacity: 0, scale: 0.95 }}
             className="bg-white rounded-3xl max-w-md w-full p-6 md:p-8 shadow-2xl border border-slate-200 relative space-y-6"
           >
-            <button
-              type="button"
-              onClick={onClose}
-              className="absolute top-5 right-5 text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-all"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {!isForced && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="absolute top-5 right-5 text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
 
             {/* Header branding */}
             <div className="flex items-center space-x-3.5 border-b border-slate-100 pb-5">
@@ -218,10 +226,17 @@ export default function LoginModal({
                   SCOTTER UNITED JFC
                 </h3>
                 <p className="text-xs text-blue-900 font-extrabold uppercase tracking-wider">
-                  Secure Coach & Admin Login
+                  {isForced ? 'Login Required' : 'Secure Coach & Admin Login'}
                 </p>
               </div>
             </div>
+
+            {isForced && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-950 font-bold flex items-center gap-2">
+                <Lock className="w-4 h-4 text-blue-900 flex-shrink-0" />
+                <span>Please log in to your Coach or Admin profile to access the pitch diary.</span>
+              </div>
+            )}
 
             {/* Login Mode Tabs */}
             <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-2xl">
@@ -276,7 +291,7 @@ export default function LoginModal({
                     <input
                       type="text"
                       required
-                      placeholder="e.g. ChrisW or NicolienL"
+                      placeholder="Enter username"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-xl py-2.5 pl-9 pr-3 text-xs font-bold text-slate-900 focus:bg-white focus:border-blue-900 focus:outline-none transition-all"
@@ -353,6 +368,7 @@ export default function LoginModal({
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 }
