@@ -73,6 +73,7 @@ export default function PitchDiary({
   const [confirmDismissId, setConfirmDismissId] = useState<string | null>(null);
   const [confirmCancelBookingId, setConfirmCancelBookingId] = useState<string | null>(null);
   const [confirmUnbookFixtureId, setConfirmUnbookFixtureId] = useState<string | null>(null);
+  const [confirmDeleteFixtureId, setConfirmDeleteFixtureId] = useState<string | null>(null);
   const [bulkActionConfirming, setBulkActionConfirming] = useState<'UNBOOK' | 'DELETE' | 'BOOK' | null>(null);
 
   // Sorter / Filter States for the Team Pitch List (underneath calendar)
@@ -160,7 +161,7 @@ export default function PitchDiary({
   // 2. Build Unified Team Fixtures & Bookings List underneath
   // Filter FA full time fixtures matching criteria
   const filteredFAFixtures = faFixtures.filter((f) => {
-    if (filterManagerOnly && (!currentUser.teamName || !isTeamMatch(currentUser.teamName, f.scotterTeam))) {
+    if (currentUser.role === 'MANAGER' && filterManagerOnly && (!currentUser.teamName || !isTeamMatch(currentUser.teamName, f.scotterTeam))) {
       return false;
     }
     if (fixturePitchFilter !== 'ALL' && f.pitchId !== fixturePitchFilter) {
@@ -175,10 +176,10 @@ export default function PitchDiary({
     return true;
   });
 
-  // Filter other non-FA manual bookings matching criteria: only show matches for their team when filterManagerOnly is enabled
+  // Filter other non-FA manual bookings matching criteria
   const manualBookings = bookings.filter((b) => {
     if (b.status === BookingStatus.DECLINED) return false;
-    if (filterManagerOnly && (!currentUser.teamName || !isTeamMatch(currentUser.teamName, b.teamName))) {
+    if (currentUser.role === 'MANAGER' && filterManagerOnly && (!currentUser.teamName || !isTeamMatch(currentUser.teamName, b.teamName))) {
       return false;
     }
     if (fixturePitchFilter !== 'ALL' && b.pitchId !== fixturePitchFilter) {
@@ -298,7 +299,7 @@ export default function PitchDiary({
         const h = Math.floor(totalMinutes / 60);
         const m = totalMinutes % 60;
         return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-      } else if (pId === '5v5') {
+      } else if (pId === '5v5' || pId === '3v3') {
         const [hStr, mStr] = slot.split(':');
         const h = parseInt(hStr, 10) + 1;
         return `${String(h).padStart(2, '0')}:${mStr}`;
@@ -318,9 +319,9 @@ export default function PitchDiary({
 
   const WEEKEND_PREBOOKED_BLOCKS: Record<string, Array<{ start: string; end: string }>> = {
     '3v3': [
-      { start: '09:30', end: '10:45' },
-      { start: '10:45', end: '12:00' },
-      { start: '12:00', end: '13:15' },
+      { start: '09:45', end: '10:45' },
+      { start: '10:45', end: '11:45' },
+      { start: '11:45', end: '12:45' },
     ],
     '5v5': [
       { start: '09:45', end: '10:45' },
@@ -1498,9 +1499,11 @@ export default function PitchDiary({
 
                       {/* Action */}
                       <td className="px-5 py-4 text-right whitespace-nowrap">
-                        {!isBooked ? (
-                          <div className="flex items-center justify-end space-x-2">
-                            {(item.booking?.status === BookingStatus.UNBOOKED || (currentUser.role === 'ADMIN' && item.type === 'FA_FIXTURE')) && (
+                        <div className="flex items-center justify-end space-x-2">
+                          {/* 1. Delete Fixture Confirmation / Button */}
+                          {confirmDeleteFixtureId === item.id ? (
+                            <div className="flex items-center space-x-1.5 bg-red-50 border border-red-200 p-1.5 rounded-lg shadow-sm">
+                              <span className="text-[10px] font-black text-red-800 uppercase">Are you sure?</span>
                               <button
                                 onClick={() => {
                                   if (item.booking) {
@@ -1509,48 +1512,66 @@ export default function PitchDiary({
                                   if (item.type === 'FA_FIXTURE') {
                                     onUpdateFaFixtures((prev) => prev.filter(f => f.id !== item.id));
                                   }
+                                  setConfirmDeleteFixtureId(null);
                                 }}
-                                className="bg-red-50 hover:bg-red-105 text-red-700 text-xs font-bold py-1.5 px-3 rounded-lg border border-red-200 transition-colors bg-white shadow-sm cursor-pointer"
+                                className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-extrabold px-2 py-1 rounded shadow-sm transition-colors cursor-pointer"
                               >
-                                Delete Fixture
+                                Yes, Delete
                               </button>
-                            )}
+                              <button
+                                onClick={() => setConfirmDeleteFixtureId(null)}
+                                className="bg-slate-200 hover:bg-slate-300 text-slate-800 text-[10px] font-extrabold px-2 py-1 rounded transition-colors cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
                             <button
-                              onClick={() => {
-                                const defaultNotes = item.type === 'FA_FIXTURE'
-                                  ? `[FA Full-Time Match] ${item.competition}: ${item.title}`
-                                  : item.booking?.notes || '';
-                                onRequestBooking(
-                                  item.pitchId,
-                                  item.timeSlot,
-                                  defaultNotes,
-                                  item.date,
-                                  item.booking?.id,
-                                  item.type === 'FA_FIXTURE' ? item.id : undefined
-                                );
-                              }}
-                              className="bg-blue-900 hover:bg-blue-800 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm transition-colors"
+                              onClick={() => setConfirmDeleteFixtureId(item.id)}
+                              className="text-red-600 hover:bg-red-50 text-xs font-bold py-1.5 px-3 rounded-lg border border-red-200 transition-colors bg-white shadow-sm cursor-pointer"
+                              title="Delete this fixture permanently"
                             >
-                              {item.booking?.status === BookingStatus.UNBOOKED ? 'Rearrange / Book' : 'Book Pitch Now'}
+                              Delete Fixture
                             </button>
-                          </div>
-                        ) : (
-                          (currentUser.role === 'ADMIN' || canManagerUnbook(currentUser, item.booking!)) && (
+                          )}
+
+                          {/* 2. Rearrange / Book Button */}
+                          <button
+                            onClick={() => {
+                              const defaultNotes = item.type === 'FA_FIXTURE'
+                                ? `[FA Full-Time Match] ${item.competition}: ${item.title}`
+                                : item.booking?.notes || '';
+                              onRequestBooking(
+                                item.pitchId,
+                                item.timeSlot,
+                                defaultNotes,
+                                item.date,
+                                item.booking?.id,
+                                item.type === 'FA_FIXTURE' ? item.id : undefined
+                              );
+                            }}
+                            className="bg-blue-900 hover:bg-blue-800 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm transition-colors cursor-pointer"
+                          >
+                            {isBooked ? 'Rearrange' : item.booking?.status === BookingStatus.UNBOOKED ? 'Rearrange / Book' : 'Book Pitch Now'}
+                          </button>
+
+                          {/* 3. Unbook Pitch (if already booked) */}
+                          {isBooked && (currentUser.role === 'ADMIN' || canManagerUnbook(currentUser, item.booking!)) && (
                             confirmUnbookFixtureId === item.booking!.id ? (
-                              <div className="flex items-center space-x-1.5 justify-end">
-                                <span className="text-[10px] font-bold text-red-700 uppercase">Confirm?</span>
+                              <div className="flex items-center space-x-1.5 bg-amber-50 border border-amber-200 p-1.5 rounded-lg shadow-sm">
+                                <span className="text-[10px] font-extrabold text-amber-800 uppercase">Unbook pitch?</span>
                                 <button
                                   onClick={() => {
                                     onCancelBooking(item.booking!.id);
                                     setConfirmUnbookFixtureId(null);
                                   }}
-                                  className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-sm transition-colors"
+                                  className="bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-extrabold px-2 py-1 rounded shadow-sm transition-colors cursor-pointer"
                                 >
                                   Yes
                                 </button>
                                 <button
                                   onClick={() => setConfirmUnbookFixtureId(null)}
-                                  className="bg-slate-200 hover:bg-slate-300 text-slate-800 text-[10px] font-bold px-2 py-0.5 rounded shadow-sm transition-colors"
+                                  className="bg-slate-200 hover:bg-slate-300 text-slate-800 text-[10px] font-extrabold px-2 py-1 rounded transition-colors cursor-pointer"
                                 >
                                   No
                                 </button>
@@ -1558,13 +1579,13 @@ export default function PitchDiary({
                             ) : (
                               <button
                                 onClick={() => setConfirmUnbookFixtureId(item.booking!.id)}
-                                className="text-red-600 hover:bg-red-50 text-xs font-bold py-1.5 px-3 rounded-lg border border-red-100 transition-colors bg-white"
+                                className="text-amber-700 hover:bg-amber-50 text-xs font-bold py-1.5 px-3 rounded-lg border border-amber-200 transition-colors bg-white shadow-sm cursor-pointer"
                               >
                                 Unbook Pitch
                               </button>
                             )
-                          )
-                        )}
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

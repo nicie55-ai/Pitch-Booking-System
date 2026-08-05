@@ -215,9 +215,25 @@ export default function CoachesSetup({
       return;
     }
 
-    // Check duplicate name
-    if (users.some((u) => u.name.toLowerCase() === newCoachName.trim().toLowerCase())) {
-      setError(`A coach named "${newCoachName}" already exists.`);
+    // Check duplicate name - if existing, update instead of throwing an error
+    const existingIndex = users.findIndex((u) => u.name.toLowerCase() === newCoachName.trim().toLowerCase());
+    if (existingIndex !== -1) {
+      const updatedUsers = [...users];
+      updatedUsers[existingIndex] = {
+        ...updatedUsers[existingIndex],
+        password: newCoachPassword.trim(),
+        role: newCoachRole,
+        teamName: newCoachTeam.trim() ? newCoachTeam.trim() : undefined,
+      };
+      onUpdateUsers(updatedUsers);
+      setSuccess(`Account for "${newCoachName.trim()}" successfully updated with new credentials!`);
+      
+      // Clear form
+      setNewCoachName('');
+      setNewCoachPassword('');
+      setNewCoachTeam('');
+      setNewCoachRole('MANAGER');
+      setShowNewPassword(false);
       return;
     }
 

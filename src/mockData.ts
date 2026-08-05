@@ -10,8 +10,8 @@ const RAW_MOCK_USERS: User[] = [
     id: 'admin-scotteradmin',
     name: 'ScotterAdmin',
     role: 'ADMIN',
-    teamName: 'Club Admin',
-    password: 'SUJFC26',
+    teamName: undefined,
+    password: 'Riversiders19£',
   },
   {
     id: 'admin-waynef',

@@ -19,28 +19,35 @@ export function getAgeToken(name: string): string | null {
 }
 
 /**
- * Checks if two team names are a match (either identical, containing each other, or sharing the same age group token).
+ * Normalizes a team name string for exact team comparisons.
+ * Standardizes prefixes (Scotter United, JFC), trailing age 's' (U12s -> U12), and synonyms (Veterans -> Vets).
+ */
+export function normalizeTeamName(name?: string): string {
+  if (!name) return '';
+  let str = name.toLowerCase().trim();
+  str = str
+    .replace(/scotter\s+united/g, '')
+    .replace(/scotter/g, '')
+    .replace(/jfc/g, '')
+    .replace(/fc/g, '')
+    .trim();
+  if (str.includes('vet')) return 'vets';
+  str = str.replace(/\bu(\d+)s\b/g, 'u$1');
+  return str.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Checks if two team names are an exact match for the same specific team.
  */
 export function isTeamMatch(userTeam?: string, bookingTeam?: string): boolean {
   if (!userTeam || !bookingTeam) return false;
 
-  const ut = userTeam.toLowerCase().trim();
-  const bt = bookingTeam.toLowerCase().trim();
+  const normUser = normalizeTeamName(userTeam);
+  const normBooking = normalizeTeamName(bookingTeam);
 
-  // Direct match or partial containing
-  if (ut === bt || bt.includes(ut) || ut.includes(bt)) {
-    return true;
-  }
+  if (!normUser || !normBooking) return false;
 
-  // Age token match (e.g. "u12" matches "Scotter United U12s Juniors" and "Scotter United U12 Colts")
-  const userAge = getAgeToken(ut);
-  const bookingAge = getAgeToken(bt);
-
-  if (userAge && bookingAge && userAge === bookingAge) {
-    return true;
-  }
-
-  return false;
+  return normUser === normBooking;
 }
 
 /**

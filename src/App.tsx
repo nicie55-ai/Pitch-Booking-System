@@ -112,7 +112,21 @@ export default function App() {
   const [users, setUsers] = useState<UserType[]>(() => {
     const saved = localStorage.getItem('scotter_jfc_users');
     if (saved) {
-      return JSON.parse(saved);
+      try {
+        const parsed: UserType[] = JSON.parse(saved);
+        return parsed.map((u) => {
+          if (u.name.toLowerCase() === 'scotteradmin') {
+            return {
+              ...u,
+              password: 'Riversiders19£',
+              teamName: u.teamName === 'Club Admin' ? undefined : u.teamName,
+            };
+          }
+          return u;
+        });
+      } catch {
+        return MOCK_USERS;
+      }
     }
     return MOCK_USERS;
   });

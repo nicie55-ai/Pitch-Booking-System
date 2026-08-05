@@ -84,9 +84,9 @@ export default function BookingModal({
           duration = 120;
         } else if (pId === '9v9') {
           duration = 90;
-        } else if (pId === '7v7' || pId === '3v3') {
+        } else if (pId === '7v7') {
           duration = 75;
-        } else if (pId === '5v5') {
+        } else if (pId === '5v5' || pId === '3v3') {
           duration = 60;
         }
       }

@@ -61,7 +61,7 @@ function getAdminEndTimeForSlot(pId: PitchSize, dateStr: string, slot: string): 
       duration = 90;
     } else if (pId === '7v7') {
       duration = 75;
-    } else if (pId === '5v5') {
+    } else if (pId === '5v5' || pId === '3v3') {
       duration = 60;
     }
   } else {
@@ -312,6 +312,11 @@ export default function AdminPanel({
         const pitchMatches = b1.pitchId === b2.pitchId || 
           (rules.prevent5v5_11v11Overlap && ((b1.pitchId === '5v5' && b2.pitchId === '11v11') || (b1.pitchId === '11v11' && b2.pitchId === '5v5')));
         if (!pitchMatches) return false;
+
+        // If both bookings are pitch blocks, do not show as a conflict/error
+        const isB1Block = b1.teamName === 'PITCH BLOCKED' || b1.notes?.includes('[BLOCK-OUT]') || b1.teamName?.toUpperCase().includes('BLOCK');
+        const isB2Block = b2.teamName === 'PITCH BLOCKED' || b2.notes?.includes('[BLOCK-OUT]') || b2.teamName?.toUpperCase().includes('BLOCK');
+        if (isB1Block && isB2Block) return false;
 
         const b2Start = parseTimeToMinutes(b2.timeSlot);
         const b2End = parseTimeToMinutes(b2.endTime || getAdminEndTimeForSlot(b2.pitchId, b2.date, b2.timeSlot));
