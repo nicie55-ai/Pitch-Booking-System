@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, PitchConfig, User as UserType } from '../types';
 import AdminPanel from './AdminPanel';
-import { canManagerUnbook, isTeamMatch } from '../utils/bookingUtils';
+import { canManagerUnbook, isTeamMatch, parseDateLocal, formatDateLocal, formatDateUK } from '../utils/bookingUtils';
 import { MOCK_FA_FULLTIME_FIXTURES, FAFixture } from '../mockData';
 
 interface PitchDiaryProps {
@@ -96,14 +96,14 @@ export default function PitchDiary({
   }, [currentUser]);
 
   // Get active day of the week
-  const dateObj = new Date(selectedDate);
+  const dateObj = parseDateLocal(selectedDate);
   const dayName = dateObj.toLocaleDateString('en-GB', { weekday: 'long' });
   const dayString = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 
   // Generate week days (7 days around selected date to easily click)
   const getWeekDates = () => {
     const dates = [];
-    const baseDate = new Date(selectedDate);
+    const baseDate = parseDateLocal(selectedDate);
     // Move to previous Monday
     const day = baseDate.getDay();
     const diff = baseDate.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
@@ -125,15 +125,15 @@ export default function PitchDiary({
   );
 
   const handlePrevWeek = () => {
-    const prev = new Date(selectedDate);
+    const prev = parseDateLocal(selectedDate);
     prev.setDate(prev.getDate() - 7);
-    setSelectedDate(prev.toISOString().split('T')[0]);
+    setSelectedDate(formatDateLocal(prev));
   };
 
   const handleNextWeek = () => {
-    const next = new Date(selectedDate);
+    const next = parseDateLocal(selectedDate);
     next.setDate(next.getDate() + 7);
-    setSelectedDate(next.toISOString().split('T')[0]);
+    setSelectedDate(formatDateLocal(next));
   };
 
   // 1. Dynamic Unique Slots generation for calendar rows on selectedDate
@@ -285,7 +285,7 @@ export default function PitchDiary({
 
   const getEndTimeForSlot = (pId: PitchSize, dateStr: string, slot: string): string => {
     if (!dateStr || !slot) return '';
-    const d = new Date(dateStr);
+    const d = parseDateLocal(dateStr);
     const day = d.getDay();
     const isWeekend = day === 0 || day === 6;
     if (isWeekend) {
@@ -341,17 +341,14 @@ export default function PitchDiary({
     '11v11': [
       { start: '10:00', end: '12:00' },
       { start: '12:00', end: '14:00' },
+      { start: '14:00', end: '16:00' },
+      { start: '16:00', end: '18:00' },
     ],
   };
 
   const getStandardSlotsForDate = (pitchId: string, dateStr: string): Array<{ start: string; end: string }> => {
-    const d = new Date(dateStr);
+    const d = parseDateLocal(dateStr);
     const day = d.getDay();
-    if (day === 0) { // Sunday
-      if (pitchId === '5v5' || pitchId === '7v7' || pitchId === '3v3') {
-        return [];
-      }
-    }
     const isWeekend = day === 0 || day === 6;
     if (isWeekend) {
       return WEEKEND_PREBOOKED_BLOCKS[pitchId] || [];
@@ -363,11 +360,9 @@ export default function PitchDiary({
     const startMins = parseTimeToMinutes(slotStartStr);
     const endMins = parseTimeToMinutes(slotEndStr);
     
-    // Check bookings (same pitch or overlapping 5v5/11v11 pitches)
+    // Check bookings for the same pitch
     const hasBookingOverlap = bookings.some(b => {
-      const pitchMatches = b.pitchId === pitchId || 
-        ((pitchId === '5v5' && b.pitchId === '11v11') || (pitchId === '11v11' && b.pitchId === '5v5'));
-      if (!pitchMatches || b.date !== dateStr) return false;
+      if (b.pitchId !== pitchId || b.date !== dateStr) return false;
       if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
       
       const bStart = parseTimeToMinutes(b.timeSlot);
@@ -378,12 +373,9 @@ export default function PitchDiary({
 
     if (hasBookingOverlap) return true;
 
-    // Check FA fixtures (same pitch or overlapping 5v5/11v11 pitches)
+    // Check FA fixtures for the same pitch
     return faFixtures.some(f => {
-      if (f.date !== dateStr) return false;
-      const pitchMatches = f.pitchId === pitchId || 
-        ((pitchId === '5v5' && f.pitchId === '11v11') || (pitchId === '11v11' && f.pitchId === '5v5'));
-      if (!pitchMatches) return false;
+      if (f.date !== dateStr || f.pitchId !== pitchId) return false;
 
       // If there is already a declined or unbooked booking associated with this fixture, it's not active
       const associatedBooking = bookings.find(
@@ -463,7 +455,7 @@ export default function PitchDiary({
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2 flex-wrap">
                     <span className="font-extrabold text-slate-900 text-xs sm:text-sm">
-                      {new Date(b.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                      {formatDateUK(b.date, { includeWeekday: true, includeYear: true })}
                     </span>
                     <span className="bg-slate-100 text-slate-800 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase">
                       {b.pitchId} Format
@@ -529,7 +521,7 @@ export default function PitchDiary({
             <div>
               <h2 className="text-xl font-bold text-slate-900">{dayName}, {dayString}</h2>
               <p className="text-xs text-blue-900 font-bold mt-0.5">
-                Week: {weekDates[0]?.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – {weekDates[6]?.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                Week: {formatDateUK(weekDates[0], { includeYear: false })} – {formatDateUK(weekDates[6], { includeYear: true })}
               </p>
             </div>
           </div>
@@ -566,7 +558,7 @@ export default function PitchDiary({
         {/* 7-Day Mini Calendar Slider */}
         <div className="grid grid-cols-7 gap-2 mt-6 border-t-2 border-slate-50 pt-4">
           {weekDates.map((d, idx) => {
-            const formatted = d.toISOString().split('T')[0];
+            const formatted = formatDateLocal(d);
             const isSelected = formatted === selectedDate;
             const isWeekend = d.getDay() === 0 || d.getDay() === 6;
             const label = d.toLocaleDateString('en-GB', { weekday: 'short' });
@@ -784,7 +776,7 @@ export default function PitchDiary({
                                 </p>
                                 <div className="space-y-1 text-slate-300 font-medium font-sans">
                                   <p><strong className="text-slate-500">Booked by:</strong> {booking.managerName}</p>
-                                  <p><strong className="text-slate-500">Date & Time:</strong> {new Date(booking.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} from {booking.timeSlot} to {resolvedEndTime}</p>
+                                  <p><strong className="text-slate-500">Date & Time:</strong> {formatDateUK(booking.date, { includeYear: true })} from {booking.timeSlot} to {resolvedEndTime}</p>
                                   <p><strong className="text-slate-500">Submitted:</strong> {new Date(booking.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} at {new Date(booking.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
                                   {booking.bookingType && (
                                     <p><strong className="text-slate-500">Format:</strong> {booking.bookingType === 'MATCH' ? 'Match / Friendly (1h 15m)' : 'Standard Slot (1h)'}</p>
@@ -1030,7 +1022,7 @@ export default function PitchDiary({
                 <option value="ALL">All Dates</option>
                 {uniqueDates.map(date => (
                   <option key={date} value={date}>
-                    {new Date(date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                    {formatDateUK(date, { includeYear: true })}
                   </option>
                 ))}
               </select>
@@ -1400,12 +1392,7 @@ export default function PitchDiary({
                     const isBooked = !!item.booking && item.booking.status !== BookingStatus.UNBOOKED;
                     const isUnbooked = item.booking?.status === BookingStatus.UNBOOKED;
                     const bookingStatus = item.booking?.status;
-                    const formattedDate = new Date(item.date).toLocaleDateString('en-GB', {
-                      weekday: 'short',
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric'
-                    });
+                    const formattedDate = formatDateUK(item.date, { includeWeekday: true, includeYear: true });
 
                     return (
                       <tr

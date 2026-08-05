@@ -7,7 +7,7 @@ import React from 'react';
 import { Shield, UserCircle, LogOut } from 'lucide-react';
 import { User } from '../types';
 
-const crestLogo = "https://scontent.flba3-1.fna.fbcdn.net/v/t39.30808-6/532879163_1049671360484279_2775875583844224736_n.jpg?stp=dst-jpg_tt6&cstp=mx2048x2048&ctp=s2048x2048&_nc_cat=104&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=yQERBlLgKlQQ7kNvwGGP89g&_nc_oc=Ado7n_EZXrVrOS6njNvWtnyzBK03xbFfrH-GjasCny1vTx9tG7bz-kdCu72pprbQxw-Sue_FCO62d1bO3WEyrZ2y&_nc_zt=23&_nc_ht=scontent.flba3-1.fna&_nc_gid=KCk6menvg1d-eIAovc2YEA&_nc_ss=7b2a8&oh=00_AQFAZzWysdEiqUrM7l4lPtWX-N6IF--Hj7UdFJw5wSS3FQ&oe=6A706792";
+const crestLogo = "https://scontent.flba3-1.fna.fbcdn.net/v/t39.30808-6/532879163_1049671360484279_2775875583844224736_n.jpg?stp=dst-jpg_tt6&cstp=mx2048x2048&ctp=s2048x2048&_nc_cat=104&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=TpepDxCIu0oQ7kNvwEjFmJo&_nc_oc=AdrOXpIxIdKo5Uu0YmupwagkZ0seTNbqr_sTpn_Tg820H6-mWU5m87XdJtgmi8PWkNKIaNWrLs0DCmWf4Y8LMJVO&_nc_zt=23&_nc_ht=scontent.flba3-1.fna&_nc_gid=N9cmcQ6fJTelyxScaauaOQ&_nc_ss=7b2a8&oh=00_AQEg1QZ6AQnbndQ8iU1F3Pbw-zlEGXuSaxiOOF0GNiPyGA&oe=6A79A212";
 
 interface HeaderProps {
   currentUser: User | null;

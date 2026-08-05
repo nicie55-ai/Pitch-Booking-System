@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { ClipboardList, CheckCircle, XCircle, AlertCircle, Calendar, Clock, MapPin, User, MessageSquare, Filter, ShieldAlert } from 'lucide-react';
 import { Booking, BookingStatus, PitchSize, User as UserType } from '../types';
+import { formatDateUK } from '../utils/bookingUtils';
 
 interface RequestManagerProps {
   bookings: Booking[];
@@ -167,12 +168,7 @@ export default function RequestManager({
             const isDeclined = b.status === BookingStatus.DECLINED;
 
             // Formatted Date
-            const matchDate = new Date(b.date).toLocaleDateString('en-GB', {
-              weekday: 'short',
-              day: 'numeric',
-              month: 'short',
-              year: 'numeric',
-            });
+            const matchDate = formatDateUK(b.date, { includeWeekday: true, includeYear: true });
 
             return (
               <div
@@ -234,7 +230,7 @@ export default function RequestManager({
 
                       {isDeclined && b.declineReason && (
                         <div className="bg-red-50 border border-red-100 rounded-lg p-2.5 mt-2 max-w-xl text-xs text-red-800 font-medium">
-                          <span className="font-extrabold block text-[10px] text-red-500 uppercase tracking-wide mb-0.5">Decline Reason (Sarah Jenkins, Admin)</span>
+                          <span className="font-extrabold block text-[10px] text-red-500 uppercase tracking-wide mb-0.5">Decline Reason (Scotter Exec Team, Admin)</span>
                           "{b.declineReason}"
                         </div>
                       )}

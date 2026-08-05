@@ -8,6 +8,7 @@ import { motion } from 'motion/react';
 import { X, Calendar, Clock, MapPin, Clipboard, FileText, AlertTriangle } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, User } from '../types';
 import { SCOTTER_TEAMS, FAFixture } from '../mockData';
+import { parseDateLocal, formatDateUK } from '../utils/bookingUtils';
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -76,7 +77,7 @@ export default function BookingModal({
     let duration = type === 'MATCH' ? 75 : 60;
 
     if (dateStr) {
-      const d = new Date(dateStr);
+      const d = parseDateLocal(dateStr);
       const day = d.getDay();
       const isWeekend = day === 0 || day === 6;
       if (isWeekend) {
@@ -436,7 +437,7 @@ export default function BookingModal({
     }));
 
     if (hasExistingBookingOnSameDate && !confirmDoubleBooking) {
-      setError(`Warning: This team (${teamToCheck}) already has another active booking on this date (${date}). Please check the confirmation box below if you definitely want to do this.`);
+      setError(`Warning: This team (${teamToCheck}) already has another active booking on this date (${formatDateUK(date)}). Please check the confirmation box below if you definitely want to do this.`);
       return;
     }
 
@@ -735,7 +736,7 @@ export default function BookingModal({
                   <div>
                     <h4 className="text-xs font-bold text-amber-900 uppercase tracking-wide">Double Booking Notice</h4>
                     <p className="text-[11px] text-amber-700 leading-normal mt-0.5">
-                      <strong>{teamToCheck}</strong> is already scheduled for a match or session on <strong>{date}</strong>. Please check the box below if you definitely want to schedule another booking on this date.
+                      <strong>{teamToCheck}</strong> is already scheduled for a match or session on <strong>{formatDateUK(date)}</strong>. Please check the box below if you definitely want to schedule another booking on this date.
                     </p>
                   </div>
                 </div>

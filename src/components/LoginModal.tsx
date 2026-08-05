@@ -10,7 +10,7 @@ import { User } from '../types';
 import { auth, googleProvider } from '../firebase';
 import { signInWithPopup } from 'firebase/auth';
 
-const crestLogo = "/src/assets/images/scotter_united_crest_1782589082484.jpg";
+const crestLogo = "https://scontent.flba3-1.fna.fbcdn.net/v/t39.30808-6/532879163_1049671360484279_2775875583844224736_n.jpg?stp=dst-jpg_tt6&cstp=mx2048x2048&ctp=s2048x2048&_nc_cat=104&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=TpepDxCIu0oQ7kNvwEjFmJo&_nc_oc=AdrOXpIxIdKo5Uu0YmupwagkZ0seTNbqr_sTpn_Tg820H6-mWU5m87XdJtgmi8PWkNKIaNWrLs0DCmWf4Y8LMJVO&_nc_zt=23&_nc_ht=scontent.flba3-1.fna&_nc_gid=N9cmcQ6fJTelyxScaauaOQ&_nc_ss=7b2a8&oh=00_AQEg1QZ6AQnbndQ8iU1F3Pbw-zlEGXuSaxiOOF0GNiPyGA&oe=6A79A212";
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -63,6 +63,7 @@ export default function LoginModal({
       (u) =>
         u.name.toLowerCase() === cleanUsername ||
         u.id.toLowerCase() === cleanUsername ||
+        (u.id === 'admin-scotteradmin' && (cleanUsername === 'scotteradmin' || cleanUsername === 'scotter exec team')) ||
         (u.googleEmail && u.googleEmail.toLowerCase() === cleanUsername)
     );
 

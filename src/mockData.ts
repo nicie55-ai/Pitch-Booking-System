@@ -8,7 +8,7 @@ import { Booking, BookingStatus, PitchConfig, SlotChangeRequest, User, PitchSize
 const RAW_MOCK_USERS: User[] = [
   {
     id: 'admin-scotteradmin',
-    name: 'ScotterAdmin',
+    name: 'Scotter Exec Team',
     role: 'ADMIN',
     teamName: undefined,
     password: 'Riversiders19£',
@@ -327,8 +327,8 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
   },
   {
     id: 'fa-mar-3',
-    date: '2026-03-08',
-    timeSlot: '10:45',
+    date: '2026-03-07',
+    timeSlot: '11:00',
     pitchId: '9v9',
     homeTeam: 'Scotter United U11 Colts',
     awayTeam: 'Barton Town U11s',
@@ -366,6 +366,16 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     scotterTeam: 'Scotter United U12s Juniors',
   },
   {
+    id: 'fa-apr-3',
+    date: '2026-04-11',
+    timeSlot: '11:00',
+    pitchId: '9v9',
+    homeTeam: 'Scotter United U12 Girls',
+    awayTeam: 'Louth Girls U12',
+    competition: 'Lincs Women & Girls League',
+    scotterTeam: 'Scotter United U12 Girls',
+  },
+  {
     id: 'fa-apr-2',
     date: '2026-04-11',
     timeSlot: '12:00',
@@ -374,16 +384,6 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     awayTeam: 'Bottesford Town U15s',
     competition: 'Lincolnshire Intermediate League',
     scotterTeam: 'Scotter United U15s',
-  },
-  {
-    id: 'fa-apr-3',
-    date: '2026-04-12',
-    timeSlot: '09:30',
-    pitchId: '9v9',
-    homeTeam: 'Scotter United U12 Girls',
-    awayTeam: 'Louth Girls U12',
-    competition: 'Lincs Women & Girls League',
-    scotterTeam: 'Scotter United U12 Girls',
   },
   {
     id: 'fa-apr-4',
@@ -415,6 +415,7 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     competition: 'Jack Kalson Junior League',
     scotterTeam: 'Scotter United U13 Saints',
   },
+  // Saturday June 27th Fixtures (Rotated 9v9 Slots: U12 Juniors 09:30, U11 Colts 11:00, U12 Girls 12:30)
   {
     id: 'fa-1',
     date: '2026-06-27',
@@ -424,6 +425,26 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     awayTeam: 'Gainsborough Trinity U12s',
     competition: 'Jack Kalson Junior League',
     scotterTeam: 'Scotter United U12s Juniors',
+  },
+  {
+    id: 'fa-5',
+    date: '2026-06-27',
+    timeSlot: '11:00',
+    pitchId: '9v9',
+    homeTeam: 'Scotter United U11 Colts',
+    awayTeam: 'Grimsby Town U11s',
+    competition: 'Jack Kalson Junior League',
+    scotterTeam: 'Scotter United U11 Colts',
+  },
+  {
+    id: 'fa-7',
+    date: '2026-06-27',
+    timeSlot: '12:30',
+    pitchId: '9v9',
+    homeTeam: 'Scotter United U12 Girls',
+    awayTeam: 'Cleethorpes Girls U12',
+    competition: 'Lincs Women & Girls League',
+    scotterTeam: 'Scotter United U12 Girls',
   },
   {
     id: 'fa-2',
@@ -455,16 +476,7 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     competition: 'Scunthorpe Mini Soccer League',
     scotterTeam: 'Scotter United U8 Juniors',
   },
-  {
-    id: 'fa-5',
-    date: '2026-06-28',
-    timeSlot: '10:45',
-    pitchId: '9v9',
-    homeTeam: 'Scotter United U11 Colts',
-    awayTeam: 'Brigg Town U11s',
-    competition: 'Jack Kalson Junior League',
-    scotterTeam: 'Scotter United U11 Colts',
-  },
+  // Sunday June 28th Fixtures (11v11 Only)
   {
     id: 'fa-6',
     date: '2026-06-28',
@@ -475,24 +487,34 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     competition: 'Lincs County Veterans League',
     scotterTeam: 'Scotter United Veterans',
   },
+  // Saturday July 4th Fixtures (Rotated 9v9 Slots: U11 Colts 09:30, U12 Girls 11:00, U12 Juniors 12:30)
   {
-    id: 'fa-7',
-    date: '2026-06-28',
-    timeSlot: '09:30',
-    pitchId: '9v9',
-    homeTeam: 'Scotter United U12 Girls',
-    awayTeam: 'Epworth Girls U12',
-    competition: 'Lincs Women & Girls League',
-    scotterTeam: 'Scotter United U12 Girls',
-  },
-  // Saturday July 4th Fixtures
-  {
-    id: 'fa-8',
+    id: 'fa-13',
     date: '2026-07-04',
     timeSlot: '09:30',
     pitchId: '9v9',
+    homeTeam: 'Scotter United U11 Colts',
+    awayTeam: 'Grimsby Town U11s',
+    competition: 'Jack Kalson Junior League',
+    scotterTeam: 'Scotter United U11 Colts',
+  },
+  {
+    id: 'fa-9-girls',
+    date: '2026-07-04',
+    timeSlot: '11:00',
+    pitchId: '9v9',
+    homeTeam: 'Scotter United U12 Girls',
+    awayTeam: 'Cleethorpes Girls U12',
+    competition: 'Lincs Women & Girls League',
+    scotterTeam: 'Scotter United U12 Girls',
+  },
+  {
+    id: 'fa-8',
+    date: '2026-07-04',
+    timeSlot: '12:30',
+    pitchId: '9v9',
     homeTeam: 'Scotter United U12s Juniors',
-    awayTeam: 'Crowle Colts U12s',
+    awayTeam: 'Gainsborough Trinity U12s',
     competition: 'Jack Kalson Junior League',
     scotterTeam: 'Scotter United U12s Juniors',
   },
@@ -536,17 +558,7 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     competition: 'Scunthorpe Mini Soccer League',
     scotterTeam: 'Scotter United U7 Saints',
   },
-  // Sunday July 5th Fixtures
-  {
-    id: 'fa-13',
-    date: '2026-07-05',
-    timeSlot: '10:45',
-    pitchId: '9v9',
-    homeTeam: 'Scotter United U11 Colts',
-    awayTeam: 'Crosby United U11s',
-    competition: 'Jack Kalson Junior League',
-    scotterTeam: 'Scotter United U11 Colts',
-  },
+  // Sunday July 5th Fixtures (11v11 Only)
   {
     id: 'fa-14',
     date: '2026-07-05',
@@ -557,16 +569,36 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     competition: 'Lincs County Veterans League',
     scotterTeam: 'Scotter United Veterans',
   },
-  // Saturday July 11th Fixtures
+  // Saturday July 11th Fixtures (Rotated 9v9 Slots: U12 Girls 09:30, U12 Juniors 11:00, U11 Colts 12:30)
   {
-    id: 'fa-15',
+    id: 'fa-19',
     date: '2026-07-11',
     timeSlot: '09:30',
     pitchId: '9v9',
+    homeTeam: 'Scotter United U12 Girls',
+    awayTeam: 'Cleethorpes Girls U12',
+    competition: 'Lincs Women & Girls League',
+    scotterTeam: 'Scotter United U12 Girls',
+  },
+  {
+    id: 'fa-15',
+    date: '2026-07-11',
+    timeSlot: '11:00',
+    pitchId: '9v9',
     homeTeam: 'Scotter United U12s Juniors',
-    awayTeam: 'Winterton Rangers U12s',
+    awayTeam: 'Gainsborough Trinity U12s',
     competition: 'Jack Kalson Junior League',
     scotterTeam: 'Scotter United U12s Juniors',
+  },
+  {
+    id: 'fa-15-colts',
+    date: '2026-07-11',
+    timeSlot: '12:30',
+    pitchId: '9v9',
+    homeTeam: 'Scotter United U11 Colts',
+    awayTeam: 'Grimsby Town U11s',
+    competition: 'Jack Kalson Junior League',
+    scotterTeam: 'Scotter United U11 Colts',
   },
   {
     id: 'fa-16',
@@ -598,17 +630,7 @@ const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     competition: 'Scunthorpe Mini Soccer League',
     scotterTeam: 'Scotter United U8 Juniors',
   },
-  // Sunday July 12th Fixtures
-  {
-    id: 'fa-19',
-    date: '2026-07-12',
-    timeSlot: '09:30',
-    pitchId: '9v9',
-    homeTeam: 'Scotter United U12 Girls',
-    awayTeam: 'Cleethorpes Girls U12',
-    competition: 'Lincs Women & Girls League',
-    scotterTeam: 'Scotter United U12 Girls',
-  },
+  // Sunday July 12th Fixtures (11v11 Only)
   {
     id: 'fa-20',
     date: '2026-07-12',

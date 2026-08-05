@@ -96,6 +96,66 @@ export function sortUsersByTeamAge(users: User[]): User[] {
 }
 
 /**
+ * Safely parses a 'YYYY-MM-DD' date string into a local Date object (midnight local time),
+ * avoiding timezone offset shifts caused by `new Date("YYYY-MM-DD")` parsing in UTC.
+ */
+export function parseDateLocal(dateStr: string): Date {
+  if (!dateStr) return new Date();
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+
+/**
+ * Formats a Date object to local 'YYYY-MM-DD' string without timezone offset drift.
+ */
+export function formatDateLocal(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Formats a 'YYYY-MM-DD' date string or Date object into standard UK format, e.g. "22 Aug 2026".
+ * - If includeWeekday: true -> "Sat, 22 Aug 2026"
+ * - If includeYear: false -> "22 Aug" (or "Sat, 22 Aug")
+ */
+export function formatDateUK(
+  dateInput?: string | Date | null,
+  options: { includeWeekday?: boolean; includeYear?: boolean } = { includeYear: true }
+): string {
+  if (!dateInput) return '';
+  let d: Date;
+  if (typeof dateInput === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+      d = parseDateLocal(dateInput);
+    } else {
+      d = new Date(dateInput);
+    }
+  } else {
+    d = dateInput;
+  }
+
+  if (isNaN(d.getTime())) return String(dateInput);
+
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const daysMap = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const dayNum = d.getDate();
+  const monthStr = months[d.getMonth()];
+  const yearStr = d.getFullYear();
+
+  let formatted = `${dayNum} ${monthStr}`;
+  if (options.includeYear !== false) {
+    formatted += ` ${yearStr}`;
+  }
+  if (options.includeWeekday) {
+    formatted = `${daysMap[d.getDay()]}, ${formatted}`;
+  }
+  return formatted;
+}
+
+/**
  * Checks if a manager has permission to unbook/cancel a booking.
  * - Admins can cancel anything.
  * - Managers can cancel bookings they created.

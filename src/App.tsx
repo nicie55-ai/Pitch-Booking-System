@@ -115,9 +115,10 @@ export default function App() {
       try {
         const parsed: UserType[] = JSON.parse(saved);
         return parsed.map((u) => {
-          if (u.name.toLowerCase() === 'scotteradmin') {
+          if (u.id === 'admin-scotteradmin' || u.name.toLowerCase() === 'scotteradmin' || u.name.toLowerCase() === 'scotter exec team') {
             return {
               ...u,
+              name: 'Scotter Exec Team',
               password: 'Riversiders19£',
               teamName: u.teamName === 'Club Admin' ? undefined : u.teamName,
             };

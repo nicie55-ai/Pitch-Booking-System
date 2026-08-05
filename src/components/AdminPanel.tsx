@@ -37,7 +37,7 @@ import {
 } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, PitchConfig, User, ClubTeam } from '../types';
 import { SCOTTER_TEAMS, MOCK_FA_FULLTIME_FIXTURES, FAFixture } from '../mockData';
-import { canManagerUnbook, isTeamMatch, sortTeamsByAge, sortUsersByTeamAge } from '../utils/bookingUtils';
+import { canManagerUnbook, isTeamMatch, sortTeamsByAge, sortUsersByTeamAge, parseDateLocal, formatDateLocal, formatDateUK } from '../utils/bookingUtils';
 
 // --- Top-Level Stateless Helpers (Hoisted and safe from Temporal Dead Zone) ---
 
@@ -49,7 +49,7 @@ function parseTimeToMinutes(t: string): number {
 
 function getAdminEndTimeForSlot(pId: PitchSize, dateStr: string, slot: string): string {
   if (!slot || !dateStr) return '';
-  const d = new Date(dateStr);
+  const d = parseDateLocal(dateStr);
   const day = d.getDay();
   const isWeekend = day === 0 || day === 6;
   let duration = 60; // default 1 hour
@@ -519,7 +519,7 @@ export default function AdminPanel({
     }
 
     const newBookings: Booking[] = [];
-    const baseDate = new Date(blockDate);
+    const baseDate = parseDateLocal(blockDate);
     const totalIterations = isRepeating ? repeatWeeks : 1;
 
     // Check for clashes across all scheduled dates using the respective slot rotation
@@ -531,7 +531,7 @@ export default function AdminPanel({
     for (let i = 0; i < totalIterations; i++) {
       const currentDate = new Date(baseDate);
       currentDate.setDate(baseDate.getDate() + i * 7);
-      const formattedDate = currentDate.toISOString().split('T')[0];
+      const formattedDate = formatDateLocal(currentDate);
 
       // Determine slot for this week according to the selected Equity Mode
       let currentSlot = blockSlot;
@@ -821,7 +821,7 @@ export default function AdminPanel({
   const handleImportFixture = (fixture: FAFixture) => {
     const statusInfo = getFixtureStatus(fixture);
     if (statusInfo.type === 'CLASH') {
-      setImportFeedback(`Error: The slot on ${fixture.date} at ${fixture.timeSlot} is already booked by another team (${statusInfo.booking?.teamName}).`);
+      setImportFeedback(`Error: The slot on ${formatDateUK(fixture.date)} at ${fixture.timeSlot} is already booked by another team (${statusInfo.booking?.teamName}).`);
       return;
     }
     if (statusInfo.type === 'BOOKED_SELF') {
@@ -1118,6 +1118,7 @@ export default function AdminPanel({
       '7v7': ['09:30', '10:45', '12:00', '13:15'],
       '9v9': ['09:30', '11:00', '12:30'],
       '11v11': ['10:00', '12:00', '14:00', '16:00'],
+      '3v3': ['09:30', '10:30', '11:30'],
     };
 
     const pitchPriority: Record<string, number> = {
@@ -1125,83 +1126,121 @@ export default function AdminPanel({
       '9v9': 2,
       '7v7': 3,
       '5v5': 4,
+      '3v3': 5,
     };
 
+    const sortedDates = Object.keys(datesGroup).sort();
     const optimizedMap = new Map<string, string>();
 
-    Object.entries(datesGroup).forEach(([date, dateFixtures]) => {
-      // Sort fixtures so more constrained pitch sizes are optimized first
-      const sortedFixtures = [...dateFixtures].sort((a, b) => {
-        const priorityA = pitchPriority[a.pitchId] || 99;
-        const priorityB = pitchPriority[b.pitchId] || 99;
-        if (priorityA !== priorityB) {
-          return priorityA - priorityB;
-        }
-        const timeCompare = a.timeSlot.localeCompare(b.timeSlot);
-        if (timeCompare !== 0) return timeCompare;
-        return a.id.localeCompare(b.id);
+    sortedDates.forEach((date, dateIdx) => {
+      const dateFixtures = datesGroup[date];
+
+      // Group by pitchId for rotation on each pitch size
+      const byPitch: Record<string, FAFixture[]> = {};
+      dateFixtures.forEach((f) => {
+        if (!byPitch[f.pitchId]) byPitch[f.pitchId] = [];
+        byPitch[f.pitchId].push(f);
       });
 
       const assigned: Array<{ pitchId: PitchSize; slot: string }> = [];
 
-      sortedFixtures.forEach((f) => {
-        const slots = pitchSlots[f.pitchId] || ['09:30', '10:45', '12:00'];
+      // Sort pitch types by priority
+      const pitchKeys = Object.keys(byPitch).sort(
+        (a, b) => (pitchPriority[a] || 99) - (pitchPriority[b] || 99)
+      );
 
-        // Filter slots to only those that do not clash with existing bookings OR with already assigned slots on this date
-        const vacantSlots = slots.filter((slotStr) => {
-          const startMins = parseTimeToMinutes(slotStr);
-          const endMins = parseTimeToMinutes(getAdminEndTimeForSlot(f.pitchId, date, slotStr));
+      pitchKeys.forEach((pitchId) => {
+        const pitchFixtures = byPitch[pitchId];
+        const slots = pitchSlots[pitchId] || ['09:30', '10:45', '12:00'];
 
-          // 1. Check against existing approved/pending bookings
-          const hasBookingOverlap = bookings.some((b) => {
-            if (b.date !== date) return false;
-            if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+        // Sort pitchFixtures by team name for deterministic base order
+        const baseSorted = [...pitchFixtures].sort(
+          (a, b) => a.scotterTeam.localeCompare(b.scotterTeam) || a.id.localeCompare(b.id)
+        );
 
-            const pitchMatches = b.pitchId === f.pitchId || 
-              (rules.prevent5v5_11v11Overlap && ((f.pitchId === '5v5' && b.pitchId === '11v11') || (f.pitchId === '11v11' && b.pitchId === '5v5')));
-            if (!pitchMatches) return false;
-
-            const bStart = parseTimeToMinutes(b.timeSlot);
-            const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
-
-            return startMins < bEnd && bStart < endMins;
-          });
-
-          if (hasBookingOverlap) return false;
-
-          // 2. Check against already assigned slots in this batch
-          const hasAssignedOverlap = assigned.some((item) => {
-            const pitchMatches = item.pitchId === f.pitchId ||
-              (rules.prevent5v5_11v11Overlap && ((f.pitchId === '5v5' && item.pitchId === '11v11') || (f.pitchId === '11v11' && item.pitchId === '5v5')));
-            if (!pitchMatches) return false;
-
-            const itemStart = parseTimeToMinutes(item.slot);
-            const itemEnd = parseTimeToMinutes(getAdminEndTimeForSlot(item.pitchId, date, item.slot));
-
-            return startMins < itemEnd && itemStart < endMins;
-          });
-
-          return !hasAssignedOverlap;
-        });
-
-        // Choose the target slot
-        let targetSlot = '';
-        if (vacantSlots.includes(f.timeSlot)) {
-          targetSlot = f.timeSlot;
-        } else if (vacantSlots.length > 0) {
-          targetSlot = vacantSlots[0];
-        } else {
-          // Fallback if no vacant slot
-          const samePitchAssignedCount = assigned.filter(item => item.pitchId === f.pitchId).length;
-          targetSlot = slots[samePitchAssignedCount % slots.length];
+        // Rotate order based on dateIdx for equity rotation across match dates
+        const count = baseSorted.length;
+        const rotatedFixtures: FAFixture[] = [];
+        if (count > 0) {
+          const shift = dateIdx % count;
+          for (let i = 0; i < count; i++) {
+            rotatedFixtures.push(baseSorted[(i + shift) % count]);
+          }
         }
 
-        assigned.push({ pitchId: f.pitchId, slot: targetSlot });
-        optimizedMap.set(f.id, targetSlot);
+        rotatedFixtures.forEach((f) => {
+          // Filter slots to only those that do not clash with existing bookings OR with already assigned slots on this date
+          const vacantSlots = slots.filter((slotStr) => {
+            const startMins = parseTimeToMinutes(slotStr);
+            const endMins = parseTimeToMinutes(
+              getAdminEndTimeForSlot(f.pitchId, date, slotStr)
+            );
+
+            // 1. Check against existing approved/pending bookings
+            const hasBookingOverlap = bookings.some((b) => {
+              if (b.date !== date) return false;
+              if (
+                b.status === BookingStatus.DECLINED ||
+                b.status === BookingStatus.UNBOOKED
+              )
+                return false;
+
+              const pitchMatches =
+                b.pitchId === f.pitchId ||
+                (rules.prevent5v5_11v11Overlap &&
+                  ((f.pitchId === '5v5' && b.pitchId === '11v11') ||
+                    (f.pitchId === '11v11' && b.pitchId === '5v5')));
+              if (!pitchMatches) return false;
+
+              const bStart = parseTimeToMinutes(b.timeSlot);
+              const bEnd = parseTimeToMinutes(
+                b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot)
+              );
+
+              return startMins < bEnd && bStart < endMins;
+            });
+
+            if (hasBookingOverlap) return false;
+
+            // 2. Check against already assigned slots in this batch
+            const hasAssignedOverlap = assigned.some((item) => {
+              const pitchMatches =
+                item.pitchId === f.pitchId ||
+                (rules.prevent5v5_11v11Overlap &&
+                  ((f.pitchId === '5v5' && item.pitchId === '11v11') ||
+                    (f.pitchId === '11v11' && item.pitchId === '5v5')));
+              if (!pitchMatches) return false;
+
+              const itemStart = parseTimeToMinutes(item.slot);
+              const itemEnd = parseTimeToMinutes(
+                getAdminEndTimeForSlot(item.pitchId, date, item.slot)
+              );
+
+              return startMins < itemEnd && itemStart < endMins;
+            });
+
+            return !hasAssignedOverlap;
+          });
+
+          // Choose target slot: assign available vacant slot sequentially
+          let targetSlot = '';
+          if (vacantSlots.length > 0) {
+            targetSlot = vacantSlots[0];
+          } else {
+            // Fallback if no vacant slot
+            const samePitchAssignedCount = assigned.filter(
+              (item) => item.pitchId === f.pitchId
+            ).length;
+            targetSlot = slots[samePitchAssignedCount % slots.length];
+          }
+
+          assigned.push({ pitchId: f.pitchId, slot: targetSlot });
+          optimizedMap.set(f.id, targetSlot);
+        });
       });
     });
 
-    return fixtures.map(f => {
+    return fixtures.map((f) => {
       if (optimizedMap.has(f.id)) {
         return {
           ...f,
@@ -1858,7 +1897,7 @@ export default function AdminPanel({
                     <div className="flex items-center gap-1.5 text-slate-200 font-bold">
                       <span className="inline-block w-2 h-2 rounded-full bg-red-500"></span>
                       <span className="text-red-400 font-black uppercase tracking-wide">Date:</span>
-                      <span>{new Date(issue.date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                      <span>{formatDateUK(issue.date)}</span>
                       <span className="text-slate-500">|</span>
                       <span className="bg-blue-900/40 text-blue-300 border border-blue-500/20 text-[9px] px-1.5 py-0.5 rounded uppercase font-black tracking-wide">{issue.pitchId} Pitch</span>
                     </div>
@@ -2075,7 +2114,7 @@ export default function AdminPanel({
                           ))}
                         </div>
                         <span className="text-xs text-slate-400 font-semibold">
-                          Until {new Date(new Date(blockDate).getTime() + (repeatWeeks - 1) * 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          Until {formatDateUK(new Date(parseDateLocal(blockDate).getTime() + (repeatWeeks - 1) * 7 * 24 * 60 * 60 * 1000))}
                         </span>
                       </div>
 
@@ -2344,7 +2383,7 @@ export default function AdminPanel({
                                     className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-bold w-32 focus:border-blue-500 focus:outline-none"
                                   />
                                 ) : (
-                                  new Date(b.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                                  formatDateUK(b.date)
                                 )}
                               </td>
 
@@ -2639,7 +2678,7 @@ export default function AdminPanel({
                           .map((b) => (
                             <tr key={b.id} className="hover:bg-slate-900/30">
                               <td className="px-4 py-3 whitespace-nowrap font-semibold text-white">
-                                {new Date(b.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                {formatDateUK(b.date)}
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap">
                                 <span className="bg-slate-800/80 text-slate-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
@@ -2988,7 +3027,7 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                                               <button
                                                 onClick={() => {
                                                   onCancelBooking(matchBooking.id);
-                                                  setImportFeedback(`Successfully unbooked match for ${f.scotterTeam} on ${f.date} from the Pitch Diary.`);
+                                                  setImportFeedback(`Successfully unbooked match for ${f.scotterTeam} on ${formatDateUK(f.date)} from the Pitch Diary.`);
                                                 }}
                                                 className="bg-red-500/10 hover:bg-red-500 text-red-400 border border-red-500/30 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded hover:text-white transition-all cursor-pointer"
                                                 title="Unbook this fixture immediately from the pitch"
@@ -3078,7 +3117,7 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                                     return (
                                       <tr key={f.id} className="hover:bg-slate-900/60">
                                         <td className="py-3 px-3 whitespace-nowrap font-medium text-slate-300">
-                                          {f.date}
+                                          {formatDateUK(f.date)}
                                         </td>
                                         <td className="py-3 px-3 whitespace-nowrap text-slate-300">
                                           {f.timeSlot}
@@ -3350,7 +3389,7 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                           <option value="">All Dates ({Array.from(new Set<string>(loadedFixtures.map(f => f.date))).length})</option>
                           {Array.from(new Set<string>(loadedFixtures.map(f => f.date))).sort().map((d: string) => (
                             <option key={d} value={d}>
-                              {new Date(d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                              {formatDateUK(d, { includeWeekday: true, includeYear: true })}
                             </option>
                           ))}
                         </select>
@@ -3588,7 +3627,7 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                                   </td>
                                   <td className="px-4 py-3.5">
                                     <div className="font-bold text-slate-200">
-                                      {new Date(fixture.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                                      {formatDateUK(fixture.date, { includeYear: true })}
                                     </div>
                                     <div className="text-[10px] text-slate-400 flex items-center mt-0.5 font-semibold">
                                       <Clock className="w-3 h-3 mr-1 text-slate-500" />
