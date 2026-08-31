@@ -162,7 +162,7 @@ export default function BookingModal({
   // Selected pitch's configured slots dynamically based on the selected date and format (filtering out occupied ones)
   const slotsAvailable = (() => {
     if (!date) return ['09:30', '10:45', '12:00'];
-    const d = new Date(date);
+    const d = parseDateLocal(date);
     const day = d.getDay();
     const isWeekend = day === 0 || day === 6;
     
@@ -239,7 +239,7 @@ export default function BookingModal({
     // Determine slots available for the new pitch format (filtering out occupied ones)
     const tempSlotsAvailable = (() => {
       if (!date) return ['09:30', '10:45', '12:00'];
-      const d = new Date(date);
+      const d = parseDateLocal(date);
       const day = d.getDay();
       const isWeekend = day === 0 || day === 6;
       let baseSlots: string[] = [];
@@ -465,9 +465,16 @@ export default function BookingModal({
         <div className="bg-blue-900 px-6 py-4 flex justify-between items-center text-white">
           <div className="flex items-center space-x-2">
             <Calendar className="w-5 h-5 text-blue-200" />
-            <h3 className="text-lg font-bold">
-              {selectedBookingId ? "Reschedule / Re-book Pitch" : "Request Pitch Booking"}
-            </h3>
+            <div>
+              <h3 className="text-lg font-bold">
+                {selectedBookingId ? "Change Pitch Slot & Booking Details" : "Request Pitch Booking"}
+              </h3>
+              {selectedBookingId && (
+                <p className="text-[11px] text-blue-200 font-semibold">
+                  Easily move this booking to any available slot, format, or date
+                </p>
+              )}
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -479,6 +486,26 @@ export default function BookingModal({
 
         {/* Modal Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          {/* Active Booking Summary Banner if Editing */}
+          {selectedBookingId && (
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 p-3 rounded-xl flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="bg-blue-900 text-white rounded-lg p-2">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase text-blue-900 tracking-wider">Modifying Existing Slot</p>
+                  <p className="text-xs font-bold text-slate-800">
+                    {adminSelectedTeam || currentUser.teamName || 'Club Booking'}
+                  </p>
+                </div>
+              </div>
+              <span className="text-[10px] bg-blue-100 text-blue-900 font-extrabold px-2 py-0.5 rounded-md uppercase">
+                {currentUser.role === 'ADMIN' ? 'Admin Override' : 'Manager'}
+              </span>
+            </div>
+          )}
+
           {/* Manager / Team Context Section */}
           {currentUser.role === 'ADMIN' ? (
             <div>
@@ -777,7 +804,7 @@ export default function BookingModal({
               type="submit"
               className="flex-1 bg-blue-900 hover:bg-blue-800 text-white font-bold py-2.5 rounded-lg transition-colors text-sm shadow-md"
             >
-              {selectedBookingId ? "Confirm Booking" : "Submit Request"}
+              {selectedBookingId ? "Save & Update Slot" : "Submit Request"}
             </button>
           </div>
         </form>

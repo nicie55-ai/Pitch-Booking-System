@@ -66,3 +66,14 @@ export interface ClubTeam {
   category: string;
   pitchSize: PitchSize;
 }
+
+export interface FAFixture {
+  id: string;
+  date: string;
+  timeSlot: string;
+  pitchId: PitchSize;
+  homeTeam: string;
+  awayTeam: string;
+  competition: string;
+  scotterTeam: string;
+}

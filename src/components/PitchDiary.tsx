@@ -266,9 +266,9 @@ export default function PitchDiary({
   const selectedUnbookedCount = selectedItems.length - selectedBookedCount;
 
   const parseTimeToMinutes = (t: string): number => {
-    if (!t) return 0;
+    if (!t || typeof t !== 'string' || !t.includes(':')) return 0;
     const [h, m] = t.split(':').map(Number);
-    return h * 60 + m;
+    return (h || 0) * 60 + (m || 0);
   };
 
   const START_HOUR = 9;
@@ -284,7 +284,7 @@ export default function PitchDiary({
   };
 
   const getEndTimeForSlot = (pId: PitchSize, dateStr: string, slot: string): string => {
-    if (!dateStr || !slot) return '';
+    if (!dateStr || !slot || !slot.includes(':')) return '';
     const d = parseDateLocal(dateStr);
     const day = d.getDay();
     const isWeekend = day === 0 || day === 6;
@@ -754,12 +754,28 @@ export default function PitchDiary({
                               top: `${topPercent}%`,
                               height: `${heightPercent}%`,
                             }}
+                            onClick={() => {
+                              if (currentUser.role === 'ADMIN' && booking.teamName !== 'PITCH BLOCKED') {
+                                const linkedFaFixture = faFixtures.find(f => 
+                                  (f.pitchId === booking.pitchId && f.date === booking.date && f.timeSlot === booking.timeSlot) ||
+                                  (booking.notes && (booking.notes.includes(f.homeTeam) || booking.notes.includes(f.awayTeam)))
+                                );
+                                onRequestBooking(
+                                  booking.pitchId,
+                                  booking.timeSlot,
+                                  booking.notes,
+                                  booking.date,
+                                  booking.id,
+                                  linkedFaFixture?.id
+                                );
+                              }
+                            }}
                             className={`absolute left-1 right-1 z-20 p-2.5 rounded-xl border text-left shadow-sm hover:shadow-md hover:z-50 transition-all flex flex-col justify-between group/bookingcard ${
                               booking.teamName === 'PITCH BLOCKED'
                                 ? 'bg-red-50/80 border-red-200 text-red-950 shadow-red-50/10 hover:bg-red-100/90 bg-[linear-gradient(45deg,rgba(220,38,38,0.02)_25%,transparent_25%,transparent_50%,rgba(220,38,38,0.02)_50%,rgba(220,38,38,0.02)_75%,transparent_75%,transparent)] bg-[length:16px_16px]'
                                 : booking.status === BookingStatus.APPROVED
-                                ? 'bg-emerald-50 border-emerald-300 text-emerald-950 shadow-emerald-50/30 hover:bg-emerald-100/90'
-                                : 'bg-amber-50 border-amber-300 text-amber-950 shadow-amber-50/30 hover:bg-amber-100/90'
+                                ? `bg-emerald-50 border-emerald-300 text-emerald-950 shadow-emerald-50/30 hover:bg-emerald-100/90 ${currentUser.role === 'ADMIN' ? 'cursor-pointer hover:border-blue-500 hover:ring-2 hover:ring-blue-400/40' : ''}`
+                                : `bg-amber-50 border-amber-300 text-amber-950 shadow-amber-50/30 hover:bg-amber-100/90 ${currentUser.role === 'ADMIN' ? 'cursor-pointer hover:border-blue-500 hover:ring-2 hover:ring-blue-400/40' : ''}`
                             }`}
                           >
                             {/* Beautiful design box pop-out tooltip on hover of the card */}
@@ -785,6 +801,11 @@ export default function PitchDiary({
                                     <div className="italic text-slate-400 mt-1 bg-slate-950/60 p-2 rounded-lg border border-slate-800 text-[10px] font-sans leading-relaxed">
                                       "{booking.notes}"
                                     </div>
+                                  )}
+                                  {currentUser.role === 'ADMIN' && booking.teamName !== 'PITCH BLOCKED' && (
+                                    <p className="text-[10px] text-blue-300 font-bold mt-1.5 pt-1 border-t border-slate-800 flex items-center gap-1">
+                                      ⚡ Click card to change slot or pitch
+                                    </p>
                                   )}
                                 </div>
                               </div>
@@ -827,7 +848,33 @@ export default function PitchDiary({
                             <div className="flex justify-end pt-1 gap-1" onClick={(e) => e.stopPropagation()}>
                               {/* ADMIN ACTIONS */}
                               {currentUser.role === 'ADMIN' && (
-                                <div className="flex gap-1">
+                                <div className="flex gap-1 items-center flex-wrap justify-end">
+                                  {/* Change Slot Button */}
+                                  {booking.teamName !== 'PITCH BLOCKED' && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const linkedFaFixture = faFixtures.find(f => 
+                                          (f.pitchId === booking.pitchId && f.date === booking.date && f.timeSlot === booking.timeSlot) ||
+                                          (booking.notes && (booking.notes.includes(f.homeTeam) || booking.notes.includes(f.awayTeam)))
+                                        );
+                                        onRequestBooking(
+                                          booking.pitchId,
+                                          booking.timeSlot,
+                                          booking.notes,
+                                          booking.date,
+                                          booking.id,
+                                          linkedFaFixture?.id
+                                        );
+                                      }}
+                                      className="bg-blue-900 hover:bg-blue-800 text-white text-[9px] font-extrabold py-0.5 px-1.5 rounded-md shadow-sm transition-colors flex items-center gap-0.5"
+                                      title="Change slot, kick-off time, pitch format or date"
+                                    >
+                                      <Clock className="w-2.5 h-2.5" />
+                                      <span>Change Slot</span>
+                                    </button>
+                                  )}
+
                                   {booking.status === BookingStatus.PENDING ? (
                                     <>
                                       <button
@@ -1189,7 +1236,7 @@ export default function PitchDiary({
                               teamName,
                               managerName: currentUser.name,
                               managerId: currentUser.id || 'admin',
-                              notes: `[FA Full-Time Match] ${item.competition || ''}: ${item.title}`,
+                              notes: fixture?.awayTeam ? fixture.awayTeam.trim() : (item.title.includes('vs') ? item.title.split(' vs ')[1]?.trim() : (item.title.includes('v') ? item.title.split(' v ')[1]?.trim() : item.title)),
                               status: BookingStatus.APPROVED,
                               createdAt: new Date().toISOString()
                             });
@@ -1522,11 +1569,16 @@ export default function PitchDiary({
                             </button>
                           )}
 
-                          {/* 2. Rearrange / Book Button */}
+                          {/* 2. Change Slot / Book Button */}
                           <button
                             onClick={() => {
-                              const defaultNotes = item.type === 'FA_FIXTURE'
-                                ? `[FA Full-Time Match] ${item.competition}: ${item.title}`
+                              const fixture = item.type === 'FA_FIXTURE' ? faFixtures.find(f => f.id === item.id) : undefined;
+                              const defaultNotes = fixture?.awayTeam
+                                ? fixture.awayTeam.trim()
+                                : item.title.includes(' vs ')
+                                ? item.title.split(' vs ')[1]?.trim()
+                                : item.title.includes(' v ')
+                                ? item.title.split(' v ')[1]?.trim()
                                 : item.booking?.notes || '';
                               onRequestBooking(
                                 item.pitchId,
@@ -1537,9 +1589,11 @@ export default function PitchDiary({
                                 item.type === 'FA_FIXTURE' ? item.id : undefined
                               );
                             }}
-                            className="bg-blue-900 hover:bg-blue-800 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm transition-colors cursor-pointer"
+                            className="bg-blue-900 hover:bg-blue-800 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm transition-colors cursor-pointer flex items-center space-x-1"
+                            title={isBooked ? 'Change pitch slot or kick-off time' : 'Book a pitch for this fixture'}
                           >
-                            {isBooked ? 'Rearrange' : item.booking?.status === BookingStatus.UNBOOKED ? 'Rearrange / Book' : 'Book Pitch Now'}
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>{isBooked ? 'Change Slot' : item.booking?.status === BookingStatus.UNBOOKED ? 'Change Slot / Book' : 'Book Pitch Now'}</span>
                           </button>
 
                           {/* 3. Unbook Pitch (if already booked) */}

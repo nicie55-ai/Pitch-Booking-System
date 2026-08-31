@@ -156,6 +156,42 @@ export function formatDateUK(
 }
 
 /**
+ * Formats a Date or 'YYYY-MM-DD' ISO date string into numeric UK format: 'DD/MM/YYYY'.
+ */
+export function formatUKDateNumeric(dateInput?: string | Date | null): string {
+  if (!dateInput) return '';
+  if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+    const [y, m, d] = dateInput.split('-');
+    return `${d}/${m}/${y}`;
+  }
+  const d = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  if (!d || isNaN(d.getTime())) return String(dateInput || '');
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+/**
+ * Parses any date format (UK 'DD/MM/YYYY', 'DD/MM/YY', 'D/M/YYYY', 'YYYY-MM-DD') into ISO 'YYYY-MM-DD'.
+ */
+export function parseUKDateToISO(input?: string): string {
+  if (!input) return '';
+  const trimmed = input.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+
+  const m = trimmed.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})$/);
+  if (m) {
+    const day = m[1].padStart(2, '0');
+    const month = m[2].padStart(2, '0');
+    let year = m[3];
+    if (year.length === 2) year = '20' + year;
+    return `${year}-${month}-${day}`;
+  }
+  return trimmed;
+}
+
+/**
  * Checks if a manager has permission to unbook/cancel a booking.
  * - Admins can cancel anything.
  * - Managers can cancel bookings they created.

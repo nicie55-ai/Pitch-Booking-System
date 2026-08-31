@@ -501,7 +501,7 @@ export default function App() {
           teamName: data.teamName || targetFaFixture.scotterTeam,
           managerName: currentUser.name,
           managerId: currentUser.id,
-          notes: data.notes || `[FA Full-Time Match] ${targetFaFixture.competition}: ${homeTeam} vs ${awayTeam}`,
+          notes: data.notes ? data.notes.trim() : awayTeam.trim(),
           status: newStatus,
           createdAt: new Date().toISOString(),
         };
@@ -535,12 +535,29 @@ export default function App() {
           endTime: data.endTime,
           bookingType: data.bookingType,
           notes: data.notes,
+          teamName: data.teamName || existingB.teamName,
           status: currentUser.role === 'ADMIN' ? BookingStatus.APPROVED : BookingStatus.PENDING,
         };
         setBookings((prev) =>
           prev.map((b) => (b.id === modalPrefills.bookingId ? updatedB : b))
         );
         saveBookingToFirestore(updatedB).catch(console.error);
+
+        // Also sync any matching FA fixture if date/pitch/timeSlot changed
+        const matchedFa = faFixtures.find(f => 
+          (f.pitchId === existingB.pitchId && f.date === existingB.date && f.timeSlot === existingB.timeSlot) ||
+          (existingB.notes && (existingB.notes.includes(f.homeTeam) || existingB.notes.includes(f.awayTeam)))
+        );
+        if (matchedFa) {
+          const updatedF: FAFixture = {
+            ...matchedFa,
+            pitchId: data.pitchId,
+            date: data.date,
+            timeSlot: data.timeSlot,
+          };
+          setFaFixtures(prev => prev.map(f => f.id === matchedFa.id ? updatedF : f));
+          saveFaFixtureToFirestore(updatedF).catch(console.error);
+        }
       }
 
       setBookingConfirmation({

@@ -52,131 +52,163 @@ export function subscribeToFirestoreData(callbacks: {
 }) {
   const unsubscribers: (() => void)[] = [];
 
-  // 1. Users Subscription
-  const usersRef = collection(db, COLLECTIONS.USERS);
-  const unsubUsers = onSnapshot(usersRef, async (snapshot) => {
-    if (snapshot.empty) {
-      // Seed default users
-      const batch = writeBatch(db);
-      MOCK_USERS.forEach((u) => {
-        batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
-      });
-      await batch.commit();
-    } else {
-      const usersList: User[] = snapshot.docs.map((d) => d.data() as User);
-      // Auto-upsert any missing default user accounts into Firestore
-      const existingIds = new Set(usersList.map((u) => u.id));
-      const missingUsers = MOCK_USERS.filter((u) => !existingIds.has(u.id));
-      if (missingUsers.length > 0) {
-        const batch = writeBatch(db);
-        missingUsers.forEach((u) => {
-          batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
-        });
-        await batch.commit();
+  try {
+    // 1. Users Subscription
+    const usersRef = collection(db, COLLECTIONS.USERS);
+    const unsubUsers = onSnapshot(usersRef, async (snapshot) => {
+      try {
+        if (snapshot.empty) {
+          // Seed default users
+          const batch = writeBatch(db);
+          MOCK_USERS.forEach((u) => {
+            batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
+          });
+          await batch.commit().catch(() => {});
+        } else {
+          const usersList: User[] = snapshot.docs.map((d) => d.data() as User);
+          // Auto-upsert any missing default user accounts into Firestore
+          const existingIds = new Set(usersList.map((u) => u.id));
+          const missingUsers = MOCK_USERS.filter((u) => !existingIds.has(u.id));
+          if (missingUsers.length > 0) {
+            const batch = writeBatch(db);
+            missingUsers.forEach((u) => {
+              batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
+            });
+            await batch.commit().catch(() => {});
+          }
+          callbacks.onUsersUpdate(usersList);
+        }
+      } catch (err) {
+        console.warn('Users snapshot process notice:', err);
       }
-      callbacks.onUsersUpdate(usersList);
-    }
-  }, (err) => console.error('Error listening to users collection:', err));
-  unsubscribers.push(unsubUsers);
+    }, (err) => console.warn('Users collection listener notice (offline/reconnecting):', err?.message || err));
+    unsubscribers.push(unsubUsers);
 
-  // 2. Bookings Subscription
-  const bookingsRef = collection(db, COLLECTIONS.BOOKINGS);
-  const unsubBookings = onSnapshot(bookingsRef, async (snapshot) => {
-    const hasBeenInitialized = localStorage.getItem('scotter_jfc_bookings_initialized');
-    if (snapshot.empty) {
-      if (!hasBeenInitialized) {
-        localStorage.setItem('scotter_jfc_bookings_initialized', 'true');
-        const batch = writeBatch(db);
-        INITIAL_BOOKINGS.forEach((b) => {
-          batch.set(doc(db, COLLECTIONS.BOOKINGS, b.id), sanitizeData(b));
-        });
-        await batch.commit();
-      } else {
-        callbacks.onBookingsUpdate([]);
+    // 2. Bookings Subscription
+    const bookingsRef = collection(db, COLLECTIONS.BOOKINGS);
+    const unsubBookings = onSnapshot(bookingsRef, async (snapshot) => {
+      try {
+        const hasBeenInitialized = localStorage.getItem('scotter_jfc_bookings_initialized');
+        if (snapshot.empty) {
+          if (!hasBeenInitialized) {
+            localStorage.setItem('scotter_jfc_bookings_initialized', 'true');
+            const batch = writeBatch(db);
+            INITIAL_BOOKINGS.forEach((b) => {
+              batch.set(doc(db, COLLECTIONS.BOOKINGS, b.id), sanitizeData(b));
+            });
+            await batch.commit().catch(() => {});
+          } else {
+            callbacks.onBookingsUpdate([]);
+          }
+        } else {
+          localStorage.setItem('scotter_jfc_bookings_initialized', 'true');
+          const bookingsList: Booking[] = snapshot.docs.map((d) => d.data() as Booking);
+          callbacks.onBookingsUpdate(bookingsList);
+        }
+      } catch (err) {
+        console.warn('Bookings snapshot process notice:', err);
       }
-    } else {
-      localStorage.setItem('scotter_jfc_bookings_initialized', 'true');
-      const bookingsList: Booking[] = snapshot.docs.map((d) => d.data() as Booking);
-      callbacks.onBookingsUpdate(bookingsList);
-    }
-  }, (err) => console.error('Error listening to bookings collection:', err));
-  unsubscribers.push(unsubBookings);
+    }, (err) => console.warn('Bookings collection listener notice (offline/reconnecting):', err?.message || err));
+    unsubscribers.push(unsubBookings);
 
-  // 3. FA Fixtures Subscription
-  const faFixturesRef = collection(db, COLLECTIONS.FA_FIXTURES);
-  const unsubFaFixtures = onSnapshot(faFixturesRef, async (snapshot) => {
-    const hasBeenInitialized = localStorage.getItem('scotter_jfc_fafixtures_initialized');
-    if (snapshot.empty) {
-      if (!hasBeenInitialized) {
-        localStorage.setItem('scotter_jfc_fafixtures_initialized', 'true');
-        const batch = writeBatch(db);
-        MOCK_FA_FULLTIME_FIXTURES.forEach((f) => {
-          batch.set(doc(db, COLLECTIONS.FA_FIXTURES, f.id), sanitizeData(f));
-        });
-        await batch.commit();
-      } else {
-        callbacks.onFaFixturesUpdate([]);
+    // 3. FA Fixtures Subscription
+    const faFixturesRef = collection(db, COLLECTIONS.FA_FIXTURES);
+    const unsubFaFixtures = onSnapshot(faFixturesRef, async (snapshot) => {
+      try {
+        const hasBeenInitialized = localStorage.getItem('scotter_jfc_fafixtures_initialized');
+        if (snapshot.empty) {
+          if (!hasBeenInitialized) {
+            localStorage.setItem('scotter_jfc_fafixtures_initialized', 'true');
+            const batch = writeBatch(db);
+            MOCK_FA_FULLTIME_FIXTURES.forEach((f) => {
+              batch.set(doc(db, COLLECTIONS.FA_FIXTURES, f.id), sanitizeData(f));
+            });
+            await batch.commit().catch(() => {});
+          } else {
+            callbacks.onFaFixturesUpdate([]);
+          }
+        } else {
+          localStorage.setItem('scotter_jfc_fafixtures_initialized', 'true');
+          const fixturesList: FAFixture[] = snapshot.docs.map((d) => d.data() as FAFixture);
+          callbacks.onFaFixturesUpdate(fixturesList);
+        }
+      } catch (err) {
+        console.warn('FA Fixtures snapshot process notice:', err);
       }
-    } else {
-      localStorage.setItem('scotter_jfc_fafixtures_initialized', 'true');
-      const fixturesList: FAFixture[] = snapshot.docs.map((d) => d.data() as FAFixture);
-      callbacks.onFaFixturesUpdate(fixturesList);
-    }
-  }, (err) => console.error('Error listening to faFixtures collection:', err));
-  unsubscribers.push(unsubFaFixtures);
+    }, (err) => console.warn('FA Fixtures listener notice (offline/reconnecting):', err?.message || err));
+    unsubscribers.push(unsubFaFixtures);
 
-  // 4. Pitch Configs Subscription
-  const pitchConfigsRef = collection(db, COLLECTIONS.PITCH_CONFIGS);
-  const unsubPitchConfigs = onSnapshot(pitchConfigsRef, async (snapshot) => {
-    if (snapshot.empty) {
-      const batch = writeBatch(db);
-      DEFAULT_PITCH_CONFIGS.forEach((p) => {
-        batch.set(doc(db, COLLECTIONS.PITCH_CONFIGS, p.id), sanitizeData(p));
-      });
-      await batch.commit();
-    } else {
-      const configsList: PitchConfig[] = snapshot.docs.map((d) => d.data() as PitchConfig);
-      callbacks.onPitchConfigsUpdate(configsList);
-    }
-  }, (err) => console.error('Error listening to pitchConfigs collection:', err));
-  unsubscribers.push(unsubPitchConfigs);
-
-  // 5. Slot Change Requests Subscription
-  const slotChangesRef = collection(db, COLLECTIONS.SLOT_CHANGE_REQUESTS);
-  const unsubSlotChanges = onSnapshot(slotChangesRef, async (snapshot) => {
-    if (snapshot.empty) {
-      const batch = writeBatch(db);
-      INITIAL_SLOT_CHANGES.forEach((s) => {
-        batch.set(doc(db, COLLECTIONS.SLOT_CHANGE_REQUESTS, s.id), sanitizeData(s));
-      });
-      await batch.commit();
-    } else {
-      const requestsList: SlotChangeRequest[] = snapshot.docs.map((d) => d.data() as SlotChangeRequest);
-      callbacks.onSlotChangeRequestsUpdate(requestsList);
-    }
-  }, (err) => console.error('Error listening to slotChangeRequests collection:', err));
-  unsubscribers.push(unsubSlotChanges);
-
-  // 6. Teams Subscription
-  const teamsRef = collection(db, COLLECTIONS.TEAMS);
-  const unsubTeams = onSnapshot(teamsRef, async (snapshot) => {
-    if (snapshot.empty) {
-      const batch = writeBatch(db);
-      SCOTTER_TEAMS.forEach((t) => {
-        batch.set(doc(db, COLLECTIONS.TEAMS, t.id), sanitizeData(t));
-      });
-      await batch.commit();
-    } else {
-      const teamsList: ClubTeam[] = snapshot.docs.map((d) => d.data() as ClubTeam);
-      if (callbacks.onTeamsUpdate) {
-        callbacks.onTeamsUpdate(teamsList);
+    // 4. Pitch Configs Subscription
+    const pitchConfigsRef = collection(db, COLLECTIONS.PITCH_CONFIGS);
+    const unsubPitchConfigs = onSnapshot(pitchConfigsRef, async (snapshot) => {
+      try {
+        if (snapshot.empty) {
+          const batch = writeBatch(db);
+          DEFAULT_PITCH_CONFIGS.forEach((p) => {
+            batch.set(doc(db, COLLECTIONS.PITCH_CONFIGS, p.id), sanitizeData(p));
+          });
+          await batch.commit().catch(() => {});
+        } else {
+          const configsList: PitchConfig[] = snapshot.docs.map((d) => d.data() as PitchConfig);
+          callbacks.onPitchConfigsUpdate(configsList);
+        }
+      } catch (err) {
+        console.warn('Pitch Configs snapshot process notice:', err);
       }
-    }
-  }, (err) => console.error('Error listening to teams collection:', err));
-  unsubscribers.push(unsubTeams);
+    }, (err) => console.warn('Pitch Configs listener notice (offline/reconnecting):', err?.message || err));
+    unsubscribers.push(unsubPitchConfigs);
+
+    // 5. Slot Change Requests Subscription
+    const slotChangesRef = collection(db, COLLECTIONS.SLOT_CHANGE_REQUESTS);
+    const unsubSlotChanges = onSnapshot(slotChangesRef, async (snapshot) => {
+      try {
+        if (snapshot.empty) {
+          const batch = writeBatch(db);
+          INITIAL_SLOT_CHANGES.forEach((s) => {
+            batch.set(doc(db, COLLECTIONS.SLOT_CHANGE_REQUESTS, s.id), sanitizeData(s));
+          });
+          await batch.commit().catch(() => {});
+        } else {
+          const requestsList: SlotChangeRequest[] = snapshot.docs.map((d) => d.data() as SlotChangeRequest);
+          callbacks.onSlotChangeRequestsUpdate(requestsList);
+        }
+      } catch (err) {
+        console.warn('Slot Changes snapshot process notice:', err);
+      }
+    }, (err) => console.warn('Slot Changes listener notice (offline/reconnecting):', err?.message || err));
+    unsubscribers.push(unsubSlotChanges);
+
+    // 6. Teams Subscription
+    const teamsRef = collection(db, COLLECTIONS.TEAMS);
+    const unsubTeams = onSnapshot(teamsRef, async (snapshot) => {
+      try {
+        if (snapshot.empty) {
+          const batch = writeBatch(db);
+          SCOTTER_TEAMS.forEach((t) => {
+            batch.set(doc(db, COLLECTIONS.TEAMS, t.id), sanitizeData(t));
+          });
+          await batch.commit().catch(() => {});
+        } else {
+          const teamsList: ClubTeam[] = snapshot.docs.map((d) => d.data() as ClubTeam);
+          if (callbacks.onTeamsUpdate) {
+            callbacks.onTeamsUpdate(teamsList);
+          }
+        }
+      } catch (err) {
+        console.warn('Teams snapshot process notice:', err);
+      }
+    }, (err) => console.warn('Teams listener notice (offline/reconnecting):', err?.message || err));
+    unsubscribers.push(unsubTeams);
+  } catch (globalListenerErr) {
+    console.warn('Firestore subscription initialized with offline fallback:', globalListenerErr);
+  }
 
   return () => {
-    unsubscribers.forEach((unsub) => unsub());
+    unsubscribers.forEach((unsub) => {
+      try {
+        unsub();
+      } catch {}
+    });
   };
 }
 
@@ -184,163 +216,243 @@ export function subscribeToFirestoreData(callbacks: {
 
 // Teams
 export async function saveTeamToFirestore(team: ClubTeam) {
-  await setDoc(doc(db, COLLECTIONS.TEAMS, team.id), sanitizeData(team), { merge: true });
+  try {
+    await setDoc(doc(db, COLLECTIONS.TEAMS, team.id), sanitizeData(team), { merge: true });
+  } catch (err) {
+    console.warn('Failed saving team to Firestore (saved locally):', err);
+  }
 }
 
 export async function saveTeamsListToFirestore(teams: ClubTeam[]) {
-  const batch = writeBatch(db);
-  teams.forEach((t) => {
-    batch.set(doc(db, COLLECTIONS.TEAMS, t.id), sanitizeData(t));
-  });
-  await batch.commit();
+  try {
+    const batch = writeBatch(db);
+    teams.forEach((t) => {
+      batch.set(doc(db, COLLECTIONS.TEAMS, t.id), sanitizeData(t));
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed saving teams list to Firestore (saved locally):', err);
+  }
 }
 
 export async function deleteTeamFromFirestore(teamId: string) {
-  await deleteDoc(doc(db, COLLECTIONS.TEAMS, teamId));
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.TEAMS, teamId));
+  } catch (err) {
+    console.warn('Failed deleting team from Firestore:', err);
+  }
 }
 
 export async function syncTeamsListToFirestore(teams: ClubTeam[]) {
-  const snapshot = await getDocs(collection(db, COLLECTIONS.TEAMS));
-  const newIds = new Set(teams.map((t) => t.id));
-  const batch = writeBatch(db);
+  try {
+    const snapshot = await getDocs(collection(db, COLLECTIONS.TEAMS));
+    const newIds = new Set(teams.map((t) => t.id));
+    const batch = writeBatch(db);
 
-  snapshot.docs.forEach((docSnap) => {
-    if (!newIds.has(docSnap.id)) {
-      batch.delete(docSnap.ref);
-    }
-  });
+    snapshot.docs.forEach((docSnap) => {
+      if (!newIds.has(docSnap.id)) {
+        batch.delete(docSnap.ref);
+      }
+    });
 
-  teams.forEach((t) => {
-    batch.set(doc(db, COLLECTIONS.TEAMS, t.id), sanitizeData(t));
-  });
+    teams.forEach((t) => {
+      batch.set(doc(db, COLLECTIONS.TEAMS, t.id), sanitizeData(t));
+    });
 
-  await batch.commit();
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed syncing teams to Firestore (cached locally):', err);
+  }
 }
 
 // Users / Coaches
 export async function saveUserToFirestore(user: User) {
-  await setDoc(doc(db, COLLECTIONS.USERS, user.id), sanitizeData(user), { merge: true });
+  try {
+    await setDoc(doc(db, COLLECTIONS.USERS, user.id), sanitizeData(user), { merge: true });
+  } catch (err) {
+    console.warn('Failed saving user to Firestore (saved locally):', err);
+  }
 }
 
 export async function saveUsersListToFirestore(users: User[]) {
-  const batch = writeBatch(db);
-  users.forEach((u) => {
-    batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
-  });
-  await batch.commit();
+  try {
+    const batch = writeBatch(db);
+    users.forEach((u) => {
+      batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed saving users list to Firestore (saved locally):', err);
+  }
 }
 
 export async function syncUsersListToFirestore(users: User[]) {
-  const snapshot = await getDocs(collection(db, COLLECTIONS.USERS));
-  const newIds = new Set(users.map((u) => u.id));
-  const batch = writeBatch(db);
+  try {
+    const snapshot = await getDocs(collection(db, COLLECTIONS.USERS));
+    const newIds = new Set(users.map((u) => u.id));
+    const batch = writeBatch(db);
 
-  snapshot.docs.forEach((docSnap) => {
-    if (!newIds.has(docSnap.id)) {
-      batch.delete(docSnap.ref);
-    }
-  });
+    snapshot.docs.forEach((docSnap) => {
+      if (!newIds.has(docSnap.id)) {
+        batch.delete(docSnap.ref);
+      }
+    });
 
-  users.forEach((u) => {
-    batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
-  });
+    users.forEach((u) => {
+      batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
+    });
 
-  await batch.commit();
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed syncing users to Firestore (cached locally):', err);
+  }
 }
 
 export async function deleteUserFromFirestore(userId: string) {
-  await deleteDoc(doc(db, COLLECTIONS.USERS, userId));
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.USERS, userId));
+  } catch (err) {
+    console.warn('Failed deleting user from Firestore:', err);
+  }
 }
 
 // Bookings
 export async function saveBookingToFirestore(booking: Booking) {
-  await setDoc(doc(db, COLLECTIONS.BOOKINGS, booking.id), sanitizeData(booking), { merge: true });
+  try {
+    await setDoc(doc(db, COLLECTIONS.BOOKINGS, booking.id), sanitizeData(booking), { merge: true });
+  } catch (err) {
+    console.warn('Failed saving booking to Firestore (saved locally):', err);
+  }
 }
 
 export async function saveBookingsBulkToFirestore(bookings: Booking[]) {
-  const batch = writeBatch(db);
-  bookings.forEach((b) => {
-    batch.set(doc(db, COLLECTIONS.BOOKINGS, b.id), sanitizeData(b));
-  });
-  await batch.commit();
+  try {
+    const batch = writeBatch(db);
+    bookings.forEach((b) => {
+      batch.set(doc(db, COLLECTIONS.BOOKINGS, b.id), sanitizeData(b));
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed saving bulk bookings to Firestore (saved locally):', err);
+  }
 }
 
 export async function deleteBookingFromFirestore(bookingId: string) {
-  await deleteDoc(doc(db, COLLECTIONS.BOOKINGS, bookingId));
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.BOOKINGS, bookingId));
+  } catch (err) {
+    console.warn('Failed deleting booking from Firestore:', err);
+  }
 }
 
 export async function syncBookingsListToFirestore(bookings: Booking[]) {
-  const snapshot = await getDocs(collection(db, COLLECTIONS.BOOKINGS));
-  const newIds = new Set(bookings.map((b) => b.id));
-  const batch = writeBatch(db);
+  try {
+    const snapshot = await getDocs(collection(db, COLLECTIONS.BOOKINGS));
+    const newIds = new Set(bookings.map((b) => b.id));
+    const batch = writeBatch(db);
 
-  snapshot.docs.forEach((docSnap) => {
-    if (!newIds.has(docSnap.id)) {
-      batch.delete(docSnap.ref);
-    }
-  });
+    snapshot.docs.forEach((docSnap) => {
+      if (!newIds.has(docSnap.id)) {
+        batch.delete(docSnap.ref);
+      }
+    });
 
-  bookings.forEach((b) => {
-    batch.set(doc(db, COLLECTIONS.BOOKINGS, b.id), sanitizeData(b));
-  });
+    bookings.forEach((b) => {
+      batch.set(doc(db, COLLECTIONS.BOOKINGS, b.id), sanitizeData(b));
+    });
 
-  await batch.commit();
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed syncing bookings to Firestore (cached locally):', err);
+  }
 }
 
 // FA Fixtures
 export async function saveFaFixtureToFirestore(fixture: FAFixture) {
-  await setDoc(doc(db, COLLECTIONS.FA_FIXTURES, fixture.id), sanitizeData(fixture), { merge: true });
+  try {
+    await setDoc(doc(db, COLLECTIONS.FA_FIXTURES, fixture.id), sanitizeData(fixture), { merge: true });
+  } catch (err) {
+    console.warn('Failed saving FA fixture to Firestore (saved locally):', err);
+  }
 }
 
 export async function saveFaFixturesBulkToFirestore(fixtures: FAFixture[]) {
-  const batch = writeBatch(db);
-  fixtures.forEach((f) => {
-    batch.set(doc(db, COLLECTIONS.FA_FIXTURES, f.id), sanitizeData(f));
-  });
-  await batch.commit();
+  try {
+    const batch = writeBatch(db);
+    fixtures.forEach((f) => {
+      batch.set(doc(db, COLLECTIONS.FA_FIXTURES, f.id), sanitizeData(f));
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed bulk saving FA fixtures to Firestore (saved locally):', err);
+  }
 }
 
 export async function deleteFaFixtureFromFirestore(fixtureId: string) {
-  await deleteDoc(doc(db, COLLECTIONS.FA_FIXTURES, fixtureId));
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.FA_FIXTURES, fixtureId));
+  } catch (err) {
+    console.warn('Failed deleting FA fixture from Firestore:', err);
+  }
 }
 
 export async function syncFaFixturesListToFirestore(fixtures: FAFixture[]) {
-  // First get existing docs to delete any removed
-  const snapshot = await getDocs(collection(db, COLLECTIONS.FA_FIXTURES));
-  const newIds = new Set(fixtures.map((f) => f.id));
-  const batch = writeBatch(db);
+  try {
+    // First get existing docs to delete any removed
+    const snapshot = await getDocs(collection(db, COLLECTIONS.FA_FIXTURES));
+    const newIds = new Set(fixtures.map((f) => f.id));
+    const batch = writeBatch(db);
 
-  snapshot.docs.forEach((docSnap) => {
-    if (!newIds.has(docSnap.id)) {
-      batch.delete(docSnap.ref);
-    }
-  });
+    snapshot.docs.forEach((docSnap) => {
+      if (!newIds.has(docSnap.id)) {
+        batch.delete(docSnap.ref);
+      }
+    });
 
-  fixtures.forEach((f) => {
-    batch.set(doc(db, COLLECTIONS.FA_FIXTURES, f.id), sanitizeData(f));
-  });
+    fixtures.forEach((f) => {
+      batch.set(doc(db, COLLECTIONS.FA_FIXTURES, f.id), sanitizeData(f));
+    });
 
-  await batch.commit();
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed syncing FA fixtures to Firestore (cached locally):', err);
+  }
 }
 
 // Pitch Configs
 export async function savePitchConfigToFirestore(config: PitchConfig) {
-  await setDoc(doc(db, COLLECTIONS.PITCH_CONFIGS, config.id), sanitizeData(config), { merge: true });
+  try {
+    await setDoc(doc(db, COLLECTIONS.PITCH_CONFIGS, config.id), sanitizeData(config), { merge: true });
+  } catch (err) {
+    console.warn('Failed saving pitch config to Firestore (saved locally):', err);
+  }
 }
 
 export async function savePitchConfigsListToFirestore(configs: PitchConfig[]) {
-  const batch = writeBatch(db);
-  configs.forEach((c) => {
-    batch.set(doc(db, COLLECTIONS.PITCH_CONFIGS, c.id), sanitizeData(c));
-  });
-  await batch.commit();
+  try {
+    const batch = writeBatch(db);
+    configs.forEach((c) => {
+      batch.set(doc(db, COLLECTIONS.PITCH_CONFIGS, c.id), sanitizeData(c));
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed saving pitch configs to Firestore (saved locally):', err);
+  }
 }
 
 // Slot Change Requests
 export async function saveSlotChangeRequestToFirestore(request: SlotChangeRequest) {
-  await setDoc(doc(db, COLLECTIONS.SLOT_CHANGE_REQUESTS, request.id), sanitizeData(request), { merge: true });
+  try {
+    await setDoc(doc(db, COLLECTIONS.SLOT_CHANGE_REQUESTS, request.id), sanitizeData(request), { merge: true });
+  } catch (err) {
+    console.warn('Failed saving slot change request to Firestore (saved locally):', err);
+  }
 }
 
 export async function deleteSlotChangeRequestFromFirestore(requestId: string) {
-  await deleteDoc(doc(db, COLLECTIONS.SLOT_CHANGE_REQUESTS, requestId));
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.SLOT_CHANGE_REQUESTS, requestId));
+  } catch (err) {
+    console.warn('Failed deleting slot change request from Firestore:', err);
+  }
 }
