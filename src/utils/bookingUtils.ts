@@ -26,13 +26,43 @@ export function normalizeTeamName(name?: string): string {
   if (!name) return '';
   let str = name.toLowerCase().trim();
   str = str
-    .replace(/scotter\s+united/g, '')
-    .replace(/scotter/g, '')
-    .replace(/jfc/g, '')
-    .replace(/fc/g, '')
+    .replace(/scotter\s+united\s+junior\s+football\s+club/gi, ' ')
+    .replace(/scotter\s+united\s+j\.?f\.?c\.?/gi, ' ')
+    .replace(/scotter\s+united\s+f\.?c\.?/gi, ' ')
+    .replace(/scotter\s+junior\s+football\s+club/gi, ' ')
+    .replace(/scotter\s+j\.?f\.?c\.?/gi, ' ')
+    .replace(/scotter\s+f\.?c\.?/gi, ' ')
+    .replace(/scotter\s+united/gi, ' ')
+    .replace(/\bscotter\b/gi, ' ')
+    .replace(/\bjfc\b/gi, ' ')
+    .replace(/\bfc\b/gi, ' ')
     .trim();
+
   if (str.includes('vet')) return 'vets';
-  str = str.replace(/\bu(\d+)s\b/g, 'u$1');
+
+  // Standardize "under 13" or "u-13" or "u 13" to "u13"
+  str = str.replace(/(?:under\s*|u[\s-]*)(\d{1,2})s?\b/gi, 'u$1');
+
+  // If Saints, Colts, or Girls is present, strip "Junior" or "Juniors" as it's purely club nomenclature
+  if (/\b(saints?|colts?|girls?)\b/i.test(str)) {
+    str = str.replace(/\bjuniors?\b/gi, ' ').trim();
+  }
+
+  // Canonical tokenization: age + specific sub-team
+  const ageMatch = str.match(/\bu(\d{1,2})\b/i);
+  let suffix = '';
+  if (/\bsaints?\b/i.test(str)) suffix = 'saints';
+  else if (/\bcolts?\b/i.test(str)) suffix = 'colts';
+  else if (/\bgirls?\b/i.test(str) || /\b(women|womens|female|w&g)\b/i.test(str)) suffix = 'girls';
+  else if (/\bjuniors?\b/i.test(str)) suffix = 'juniors';
+
+  if (ageMatch && suffix) {
+    return `${ageMatch[0].toLowerCase()} ${suffix}`;
+  }
+  if (ageMatch) {
+    return ageMatch[0].toLowerCase();
+  }
+
   return str.replace(/\s+/g, ' ').trim();
 }
 
@@ -211,3 +241,41 @@ export function canManagerUnbook(currentUser: User, booking: Booking): boolean {
 
   return false;
 }
+
+/**
+ * Detects if a team name or fixture refers to Scotter United U14 Girls.
+ */
+export function isU14GirlsTeam(teamName?: string): boolean {
+  if (!teamName) return false;
+  const lower = teamName.toLowerCase();
+  return lower.includes('u14') && (lower.includes('girl') || lower.includes('girls'));
+}
+
+/**
+ * Checks if there is a mutual exclusion constraint between 5v5 pitch and 11v11 pitch.
+ * Rule: The 5v5 pitch cannot be used when the U14 Girls play on the 11v11 pitch.
+ */
+export function check5v5And11v11U14GirlsConflict(
+  pitchA: string,
+  teamA: string,
+  pitchB: string,
+  teamB: string
+): boolean {
+  if (pitchA === '5v5' && pitchB === '11v11') {
+    return isU14GirlsTeam(teamB);
+  }
+  if (pitchA === '11v11' && pitchB === '5v5') {
+    return isU14GirlsTeam(teamA);
+  }
+  return false;
+}
+
+/**
+ * Parses time string HH:MM to total minutes from midnight.
+ */
+export function parseTimeToMinutes(t: string): number {
+  if (!t || !t.includes(':')) return 0;
+  const [h, m] = t.split(':').map(Number);
+  return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+}
+

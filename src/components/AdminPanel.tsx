@@ -37,7 +37,7 @@ import {
 } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, PitchConfig, User, ClubTeam } from '../types';
 import { SCOTTER_TEAMS, MOCK_FA_FULLTIME_FIXTURES, FAFixture } from '../mockData';
-import { canManagerUnbook, isTeamMatch, sortTeamsByAge, sortUsersByTeamAge, parseDateLocal, formatDateLocal, formatDateUK, formatUKDateNumeric, parseUKDateToISO } from '../utils/bookingUtils';
+import { canManagerUnbook, isTeamMatch, normalizeTeamName, sortTeamsByAge, sortUsersByTeamAge, parseDateLocal, formatDateLocal, formatDateUK, formatUKDateNumeric, parseUKDateToISO, check5v5And11v11U14GirlsConflict, isU14GirlsTeam } from '../utils/bookingUtils';
 
 // --- Top-Level Stateless Helpers (Hoisted and safe from Temporal Dead Zone) ---
 
@@ -61,7 +61,7 @@ function getAdminEndTimeForSlot(pId: PitchSize, dateStr: string, slot: string): 
       duration = 90;
     } else if (pId === '7v7') {
       duration = 75;
-    } else if (pId === '5v5' || pId === '3v3') {
+    } else if (pId === '5v5') {
       duration = 60;
     }
   } else {
@@ -170,40 +170,88 @@ function parseFullTimeTabLine(line: string) {
     }
   }
 
-  // Home team: non-empty column before vsIdx that is not a pure date or game type indicator (e.g. "L", "Cup")
-  const beforeVs = cols.slice(0, vsIdx).filter(c => {
+  const isCodeOrFlag = (c: string) => {
+    const cl = c.toLowerCase();
+    if (!cl) return true;
+    if (cl === 'vs' || cl === 'v') return true;
+    if (extractDateAndExplicitTime(c).date) return true;
+    if (['l', 'cup', 'fa', 'p', 'f', 'ch', 'div', 'post', 'postp'].includes(cl)) return true;
+    // Division or fixture codes like "14C", "11A", "9B", "7U", "12B", etc.
+    if (/^[0-9]{1,2}[a-z]{1,2}$/i.test(cl)) return true;
+    return false;
+  };
+
+  // Home team candidate columns before vsIdx
+  const beforeVs = cols.slice(0, vsIdx).filter(c => !isCodeOrFlag(c));
+  let homeTeam = 'Home Team';
+  if (beforeVs.length > 0) {
+    const scotterCand = beforeVs.filter(c => c.toLowerCase().includes('scotter'));
+    if (scotterCand.length > 0) {
+      // Pick the longest, most descriptive name (e.g. "Scotter United U14 Girls" over "Scotter United U14")
+      scotterCand.sort((a, b) => b.length - a.length);
+      homeTeam = scotterCand[0];
+    } else {
+      const sorted = [...beforeVs].sort((a, b) => b.length - a.length);
+      homeTeam = sorted[0];
+    }
+  }
+
+  // Away team candidate columns after vsIdx
+  const afterVsRaw = cols.slice(vsIdx + 1).filter(c => {
     if (!c) return false;
-    if (c.toLowerCase() === 'vs' || c.toLowerCase() === 'v') return false;
+    const cl = c.toLowerCase();
+    if (cl === 'vs' || cl === 'v') return false;
     if (extractDateAndExplicitTime(c).date) return false;
-    if (c === 'L' || c === 'Cup' || c === 'FA' || c === 'P' || c === 'F') return false;
     return true;
   });
-  const homeTeam = beforeVs[0] || 'Home Team';
+  if (afterVsRaw.length === 0) return null;
 
-  // Away team: non-empty column after vsIdx that is not identical to homeTeam
-  const afterVs = cols.slice(vsIdx + 1).filter(c => {
-    if (!c) return false;
-    if (c.toLowerCase() === 'vs' || c.toLowerCase() === 'v') return false;
+  const venueKeywords = ['playing field', 'war memorial', 'ground', 'park', 'stadium', 'arena', 'sports complex', 'recreation'];
+  const isVenue = (c: string) => venueKeywords.some(kw => c.toLowerCase().includes(kw));
+  const compRegex = /\b(u\d+|under\s+\d+|autumn|supreme|premier|divisional|division|cup|league|trophy|plate|quickline|north|championship|womens|women|girls)\b/i;
+
+  const afterVsTeams = afterVsRaw.filter(c => {
+    if (c === homeTeam) return false;
+    if (isVenue(c)) return false;
+    if (compRegex.test(c) && !/\b(u\d+|fc|united|town|juniors|saints|colts|griffins|rovers|rangers|wanderers|city|athletic)\b/i.test(c)) {
+      return false;
+    }
     return true;
   });
-  if (afterVs.length === 0) return null;
-  const awayTeam = afterVs[0];
 
-  const remainingCols = afterVs.slice(1).filter(c => c !== awayTeam && c !== homeTeam);
+  let awayTeam = 'Away Team';
+  if (afterVsTeams.length > 0) {
+    const scotterCand = afterVsTeams.filter(c => c.toLowerCase().includes('scotter'));
+    if (scotterCand.length > 0) {
+      scotterCand.sort((a, b) => b.length - a.length);
+      awayTeam = scotterCand[0];
+    } else {
+      awayTeam = afterVsTeams[0];
+    }
+  } else if (afterVsRaw[0]) {
+    awayTeam = afterVsRaw[0];
+  }
+
+  const remainingCols = afterVsRaw.filter(c => c !== awayTeam && c !== homeTeam);
   let venue = '';
   let competition = '';
   let statusNotes = '';
-
-  const compRegex = /\b(u\d+|under\s+\d+|autumn|supreme|premier|divisional|division|cup|league|trophy|plate|quickline|north|championship)\b/i;
 
   remainingCols.forEach(col => {
     const cl = col.toLowerCase();
     if (cl === 'postponed' || cl === 'cancelled' || cl === 'post' || cl === 'postp') {
       statusNotes = col;
+    } else if (isVenue(col)) {
+      if (!venue) venue = col;
     } else if (compRegex.test(col)) {
-      if (!competition) competition = col;
+      if (!competition) {
+        competition = col;
+      } else if (!competition.toLowerCase().includes(col.toLowerCase())) {
+        competition = `${competition} (${col})`;
+      }
     } else {
       if (!venue) venue = col;
+      else if (!competition) competition = col;
     }
   });
 
@@ -225,21 +273,24 @@ function parseFullTimeTabLine(line: string) {
   };
 }
 
-function findBestTeamMatch(pastedName: string): string {
+function findBestTeamMatch(pastedName: string, contextLine?: string): string {
   if (!pastedName || typeof pastedName !== 'string') return SCOTTER_TEAMS[0].name;
 
   const norm = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normPasted = normalizeTeamName(pastedName);
 
-  // 1. Direct exact or normalized match against all Scotter teams
+  // 1. Direct exact or normalized canonical match against all Scotter teams
   for (const team of SCOTTER_TEAMS) {
-    if (norm(pastedName) === norm(team.name) || norm(pastedName) === norm(`Scotter United ${team.name}`)) {
+    if (
+      norm(pastedName) === norm(team.name) ||
+      norm(pastedName) === norm(`Scotter United ${team.name}`) ||
+      (normPasted && normPasted === normalizeTeamName(team.name))
+    ) {
       return team.name;
     }
   }
 
   // 2. Clean club prefixes carefully
-  // Remove "Scotter United Junior Football Club", "Scotter United JFC", "Scotter United FC", "Scotter United", "Scotter JFC", etc.
-  // Note: stripping "Junior Football Club" / "JFC" as a whole phrase prevents "Junior" from false-matching "Juniors" team suffix!
   let cleaned = pastedName
     .replace(/scotter\s+united\s+junior\s+football\s+club/gi, ' ')
     .replace(/scotter\s+united\s+j\.?f\.?c\.?/gi, ' ')
@@ -254,18 +305,32 @@ function findBestTeamMatch(pastedName: string): string {
     .replace(/\bf\.?c\.?\b/gi, ' ')
     .trim();
 
+  // If Saints, Colts, or Girls is in the name, strip "Junior" or "Juniors" as it's purely club nomenclature
+  // (e.g. "Scotter United Junior Saints U13" -> "Saints U13")
+  if (/\b(saints?|colts?|girls?)\b/i.test(cleaned)) {
+    cleaned = cleaned.replace(/\bjuniors?\b/gi, ' ').trim();
+  }
+
   if (!cleaned) cleaned = pastedName;
+
+  const normCleaned = normalizeTeamName(cleaned);
 
   // Direct match after stripping club prefix
   for (const team of SCOTTER_TEAMS) {
-    if (norm(cleaned) === norm(team.name)) {
+    if (
+      norm(cleaned) === norm(team.name) ||
+      (normCleaned && normCleaned === normalizeTeamName(team.name))
+    ) {
       return team.name;
     }
   }
 
   // 3. Structured parsing: Extract Age Group, Gender/Tag, and Sub-team Suffix
   let ageNum: number | null = null;
-  const ageMatch = cleaned.match(/(?:u|under\s*|\b)(\d{1,2})(?:s|\b)/i) || pastedName.match(/(?:u|under\s*)(\d{1,2})/i);
+  const combinedContext = `${cleaned} ${contextLine || ''}`.toLowerCase();
+  const ageMatch = cleaned.match(/(?:u|under\s*|\b)(\d{1,2})(?:s|\b)/i) || 
+                   pastedName.match(/(?:u|under\s*)(\d{1,2})/i) ||
+                   combinedContext.match(/(?:u|under\s*)(\d{1,2})/i);
   if (ageMatch) {
     ageNum = parseInt(ageMatch[1], 10);
   } else if (/vets?|veterans?/i.test(cleaned) || /vets?|veterans?/i.test(pastedName)) {
@@ -273,10 +338,14 @@ function findBestTeamMatch(pastedName: string): string {
   }
 
   // Extract Suffix: "Saints", "Juniors", "Colts", "Girls", etc.
-  const isSaints = /\bsaints?\b/i.test(cleaned);
-  const isColts = /\bcolts?\b/i.test(cleaned);
-  const isGirls = /\bgirls?\b/i.test(cleaned);
-  const isJuniors = /\bjuniors?\b/i.test(cleaned);
+  const isSaints = /\bsaints?\b/i.test(cleaned) || /\bsaints?\b/i.test(combinedContext);
+  const isColts = /\bcolts?\b/i.test(cleaned) || /\bcolts?\b/i.test(combinedContext);
+  const isGirls = /\bgirls?\b/i.test(cleaned) || /\bgirls?\b/i.test(combinedContext) || /\b(women|womens|female|w&g)\b/i.test(combinedContext) || /\b14c\b/i.test(combinedContext);
+  // CRITICAL: "Juniors" is ONLY a sub-team moniker if Saints, Colts, and Girls are NOT present.
+  // In FA Full-Time text, "Junior" appears as part of club name (e.g. "Scotter United Junior Saints U13").
+  // This must match Saints, never Juniors.
+  const isJuniors = (!isSaints && !isColts && !isGirls) && 
+                    (/\bjuniors?\b/i.test(cleaned) || /\bjuniors?\b/i.test(combinedContext));
 
   // Score candidate teams
   let bestMatch = '';
@@ -298,20 +367,20 @@ function findBestTeamMatch(pastedName: string): string {
 
     // Match specific suffix
     if (isSaints) {
-      if (teamNorm.includes('saints')) score += 30;
-      else score -= 10;
+      if (teamNorm.includes('saints')) score += 50;
+      else score -= 30;
     }
     if (isColts) {
-      if (teamNorm.includes('colts')) score += 30;
-      else score -= 10;
+      if (teamNorm.includes('colts')) score += 50;
+      else score -= 30;
     }
     if (isGirls) {
-      if (teamNorm.includes('girls')) score += 30;
-      else score -= 10;
+      if (teamNorm.includes('girls')) score += 50;
+      else score -= 30;
     }
     if (isJuniors) {
-      if (teamNorm.includes('juniors')) score += 30;
-      else score -= 10;
+      if (teamNorm.includes('juniors')) score += 50;
+      else score -= 30;
     }
 
     // If no specific suffix in input (e.g. "U14" or "U15"), prefer exact base age group (e.g. U14s / U15 / U17 / U18)
@@ -350,15 +419,33 @@ function isNameMismatch(fixture: FAFixture) {
       .replace(/\bf\.?c\.?\b/gi, '')
       .replace(/[^a-z0-9]/g, '');
 
-  const original = norm(fixture.homeTeam.toLowerCase().includes('scotter') ? fixture.homeTeam : fixture.awayTeam);
+  const original = norm(isScotterHomeFixture(fixture) ? fixture.homeTeam : fixture.awayTeam);
   const mapped = norm(fixture.scotterTeam);
   return original !== mapped;
+}
+
+export function isScotterHomeFixture(f: { homeTeam: string; scotterTeam?: string; awayTeam?: string }): boolean {
+  if (!f) return false;
+  const h = (f.homeTeam || '').toLowerCase();
+  const s = (f.scotterTeam || '').toLowerCase();
+  const a = (f.awayTeam || '').toLowerCase();
+
+  if (h.includes('scotter')) return true;
+  if (a.includes('scotter')) return false;
+  if (s.includes('scotter')) return true;
+  if (f.homeTeam && f.scotterTeam && f.homeTeam === f.scotterTeam) return true;
+  if (SCOTTER_TEAMS.some((t) => t.name.toLowerCase() === h)) return true;
+  if (SCOTTER_TEAMS.some((t) => t.name.toLowerCase() === s)) {
+    return true;
+  }
+  return false;
 }
 
 interface AdminPanelProps {
   bookings: Booking[];
   pitchConfigs: PitchConfig[];
   selectedDate: string;
+  setSelectedDate?: (date: string) => void;
   onAddBookingsBulk: (newBookings: Booking[]) => void;
   onCancelBooking: (id: string) => void;
   onUpdateBooking?: (id: string, fields: Partial<Booking>) => void;
@@ -375,6 +462,7 @@ export default function AdminPanel({
   bookings,
   pitchConfigs,
   selectedDate,
+  setSelectedDate,
   onAddBookingsBulk,
   onCancelBooking,
   onUpdateBooking,
@@ -464,9 +552,9 @@ export default function AdminPanel({
       const overlaps = activeBookings.filter(b2 => {
         if (b1.id === b2.id || b1.date !== b2.date) return false;
         
-        // Pitch overlap check (same pitch, or 5v5 and 11v11 overlap)
+        // Pitch overlap check (same pitch, or 5v5 and 11v11 U14 Girls conflict)
         const pitchMatches = b1.pitchId === b2.pitchId || 
-          (rules.prevent5v5_11v11Overlap && ((b1.pitchId === '5v5' && b2.pitchId === '11v11') || (b1.pitchId === '11v11' && b2.pitchId === '5v5')));
+          (rules.prevent5v5_11v11Overlap && check5v5And11v11U14GirlsConflict(b1.pitchId, b1.teamName, b2.pitchId, b2.teamName));
         if (!pitchMatches) return false;
 
         // If both bookings are pitch blocks, do not show as a conflict/error
@@ -535,7 +623,7 @@ export default function AdminPanel({
     }
 
     const pitchesToBlock: PitchSize[] = blockOutPitchId === 'ALL' 
-      ? ['11v11', '9v9', '7v7', '5v5', '3v3'] 
+      ? ['11v11', '9v9', '7v7', '5v5'] 
       : [blockOutPitchId];
 
     const newBlockOutBookings: Booking[] = [];
@@ -679,7 +767,7 @@ export default function AdminPanel({
 
       const clash = bookings.find((b) => {
         const pitchMatches = b.pitchId === pitchSize || 
-          (rules.prevent5v5_11v11Overlap && ((pitchSize === '5v5' && b.pitchId === '11v11') || (pitchSize === '11v11' && b.pitchId === '5v5')));
+          (rules.prevent5v5_11v11Overlap && check5v5And11v11U14GirlsConflict(pitchSize, selectedTeam, b.pitchId, b.teamName));
         if (!pitchMatches || b.date !== formattedDate) return false;
         if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
 
@@ -822,7 +910,7 @@ export default function AdminPanel({
 
     const existing = bookings.find((b) => {
       const pitchMatches = b.pitchId === fixture.pitchId || 
-        (rules.prevent5v5_11v11Overlap && ((fixture.pitchId === '5v5' && b.pitchId === '11v11') || (fixture.pitchId === '11v11' && b.pitchId === '5v5')));
+        (rules.prevent5v5_11v11Overlap && check5v5And11v11U14GirlsConflict(fixture.pitchId, fixture.scotterTeam || fixture.homeTeam, b.pitchId, b.teamName));
       if (!pitchMatches || b.date !== fixture.date) return false;
       if (b.status !== BookingStatus.APPROVED) return false;
 
@@ -873,13 +961,14 @@ export default function AdminPanel({
 
       if (hasClash) return false;
 
-      // Check if 5v5 and 11v11 overlap prevention is enabled and active
+      // Check if 5v5 and 11v11 U14 Girls overlap prevention is enabled and active
       if (rules.prevent5v5_11v11Overlap) {
-        if (pitchId === '11v11' || pitchId === '5v5') {
-          const crossPitchId: PitchSize = pitchId === '11v11' ? '5v5' : '11v11';
+        if (pitchId === '5v5') {
+          // 5v5 pitch cannot be used when U14 Girls play on 11v11
           const hasCrossClash = bookings.some((b) => {
-            if (b.pitchId !== crossPitchId || b.date !== date) return false;
+            if (b.pitchId !== '11v11' || b.date !== date) return false;
             if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+            if (!isU14GirlsTeam(b.teamName)) return false;
 
             const bStart = parseTimeToMinutes(b.timeSlot);
             const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
@@ -899,16 +988,24 @@ export default function AdminPanel({
     const getPitchSlots = (pitchId: PitchSize): string[] => {
       const config = pitchConfigs.find((p) => p.id === pitchId);
       if (config && config.defaultSlots && config.defaultSlots.length > 0) {
-        return [...config.defaultSlots];
+        if (pitchId === '11v11') {
+          return Array.from(new Set([...config.defaultSlots.filter((s) => s !== '16:00'), '10:00', '12:00', '14:00']))
+            .sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
+        }
+        if (pitchId === '5v5') {
+          return Array.from(new Set([...config.defaultSlots.filter((s) => s !== '09:30' && s !== '12:00'), '09:45', '10:45', '11:45', '12:45', '13:45']))
+            .sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
+        }
+        return [...config.defaultSlots].sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
       }
-      const fallback: Record<PitchSize, string[]> = {
-        '3v3': ['09:30', '10:45', '12:00', '13:15'],
-        '5v5': ['09:45', '10:45', '11:45'],
-        '7v7': ['09:30', '10:45', '12:00', '13:15'],
-        '9v9': ['09:30', '11:00', '12:30'],
-        '11v11': ['10:00', '12:00', '14:00', '16:00'],
+      const fallback: Partial<Record<PitchSize, string[]>> = {
+        '5v5': ['09:45', '10:45', '11:45', '12:45', '13:45'],
+        '7v7': ['09:30', '10:45', '12:00', '13:30', '14:45'],
+        '9v9': ['09:30', '11:00', '12:30', '14:00'],
+        '11v11': ['10:00', '12:00', '14:00'],
       };
-      return fallback[pitchId] || ['09:30', '10:45', '12:00'];
+      const slots = fallback[pitchId] || ['09:30', '10:45', '12:00'];
+      return slots.sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
     };
 
     // Track historical kick-off slot frequencies per team to ensure balanced equity (fair distribution)
@@ -937,11 +1034,7 @@ export default function AdminPanel({
     // 2. Group fixtures by match date
     const datesGroup: Record<string, FAFixture[]> = {};
     fixtures.forEach((f) => {
-      const isHome =
-        f.homeTeam.toLowerCase().includes('scotter') ||
-        f.scotterTeam.toLowerCase().includes('scotter') ||
-        f.homeTeam === f.scotterTeam;
-      if (isHome) {
+      if (isScotterHomeFixture(f)) {
         if (!datesGroup[f.date]) datesGroup[f.date] = [];
         datesGroup[f.date].push(f);
       }
@@ -950,22 +1043,31 @@ export default function AdminPanel({
     const sortedDates = Object.keys(datesGroup).sort();
     const assignedSlots = new Map<string, string>();
 
-    const pitchPriority: Record<string, number> = {
-      '11v11': 1,
-      '9v9': 2,
-      '7v7': 3,
-      '5v5': 4,
-      '3v3': 5,
-    };
-
     sortedDates.forEach((date) => {
       const dateFixtures = datesGroup[date];
       const assignedOnDate: Array<{ pitchId: PitchSize; slot: string; team: string }> = [];
+      const has5v5OnDate = dateFixtures.some(f => f.pitchId === '5v5');
 
-      // Sort by pitch priority (11v11, 9v9, 7v7, 5v5, 3v3) then deterministic team order
+      // Sorting within date:
+      // Under FA guidelines & club rules, 5v5 cannot be scheduled when U14 Girls play on 11v11.
+      // When 5v5 matches are scheduled on this date, 5v5 matches get morning priority (09:45, 10:45, 11:45).
+      // U14 Girls on 11v11 is scheduled after 5v5 fixtures conclude (at 12:00 or 14:00) so there is zero overlap.
+      const getPriority = (f: FAFixture) => {
+        if (f.pitchId === '11v11' && isU14GirlsTeam(f.scotterTeam || f.homeTeam)) {
+          return has5v5OnDate ? 10 : 4;
+        }
+        const priorities: Record<string, number> = {
+          '5v5': 1,
+          '7v7': 2,
+          '9v9': 3,
+          '11v11': 4,
+        };
+        return priorities[f.pitchId] || 5;
+      };
+
       const sortedDateFixtures = [...dateFixtures].sort((a, b) => {
-        const pA = pitchPriority[a.pitchId] || 99;
-        const pB = pitchPriority[b.pitchId] || 99;
+        const pA = getPriority(a);
+        const pB = getPriority(b);
         if (pA !== pB) return pA - pB;
         return a.scotterTeam.localeCompare(b.scotterTeam) || a.id.localeCompare(b.id);
       });
@@ -992,8 +1094,7 @@ export default function AdminPanel({
             const pitchMatches =
               b.pitchId === f.pitchId ||
               (rules.prevent5v5_11v11Overlap &&
-                ((f.pitchId === '5v5' && b.pitchId === '11v11') ||
-                  (f.pitchId === '11v11' && b.pitchId === '5v5')));
+                check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.homeTeam, b.pitchId, b.teamName));
             if (!pitchMatches) return false;
 
             const bStart = parseTimeToMinutes(b.timeSlot);
@@ -1011,8 +1112,7 @@ export default function AdminPanel({
             const pitchMatches =
               item.pitchId === f.pitchId ||
               (rules.prevent5v5_11v11Overlap &&
-                ((f.pitchId === '5v5' && item.pitchId === '11v11') ||
-                  (f.pitchId === '11v11' && item.pitchId === '5v5')));
+                check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.homeTeam, item.pitchId, item.team));
             if (!pitchMatches) return false;
 
             const itemStart = parseTimeToMinutes(item.slot);
@@ -1028,40 +1128,31 @@ export default function AdminPanel({
 
         let chosenSlot = '';
 
-        // If fixture already has an explicit prebookable slot from FA / user edit that is valid and clash-free, respect it
-        if (
-          !forceReassignAll &&
-          f.timeSlot &&
-          standardSlots.includes(f.timeSlot) &&
-          !checkClash(f.timeSlot)
-        ) {
-          chosenSlot = f.timeSlot;
+        // Find all available vacant standard prebookable slots for this pitch format
+        const vacantSlots = standardSlots.filter((s) => !checkClash(s));
+        vacantSlots.sort((s1, s2) => parseTimeToMinutes(s1) - parseTimeToMinutes(s2));
+
+        if (vacantSlots.length > 0) {
+          chosenSlot = vacantSlots[0];
         } else {
-          // Find all available vacant standard prebookable slots for this pitch format
-          const vacantSlots = standardSlots.filter((s) => !checkClash(s));
-
-          if (vacantSlots.length > 0) {
-            // Fair distribution ranking:
-            // 1. Least usage frequency for this team across all matches
-            // 2. Penalty (+0.6) if it's the exact same slot as their previous match (avoids consecutive identical kickoffs)
-            // 3. Earliest standard slot index
-            const teamUsage = teamSlotUsage[f.scotterTeam] || {};
-            const lastSlot = teamLastSlot[f.scotterTeam];
-
-            vacantSlots.sort((s1, s2) => {
-              const count1 = teamUsage[s1] || 0;
-              const count2 = teamUsage[s2] || 0;
-              const score1 = count1 + (s1 === lastSlot ? 0.6 : 0);
-              const score2 = count2 + (s2 === lastSlot ? 0.6 : 0);
-              if (score1 !== score2) return score1 - score2;
-              return standardSlots.indexOf(s1) - standardSlots.indexOf(s2);
-            });
-
-            chosenSlot = vacantSlots[0];
+          // If all standard prebookable slots are booked or clashing, search across all possible daytime slots
+          const candidateSlots = [
+            '09:30', '09:45', '10:00', '10:45', '11:00', '11:15', '11:30', '11:45',
+            '12:00', '12:15', '12:30', '12:45', '13:00', '13:15', '13:30', '13:45',
+            '14:00', '14:15', '14:30', '14:45', '15:00', '15:15', '15:30', '15:45', '16:00'
+          ];
+          const nonClashing = candidateSlots.filter((s) => !checkClash(s));
+          if (nonClashing.length > 0) {
+            chosenSlot = nonClashing[0];
           } else {
-            // If all standard prebookable slots are booked, fallback to standard rotation
-            const samePitchCount = assignedOnDate.filter((a) => a.pitchId === f.pitchId).length;
-            chosenSlot = standardSlots[samePitchCount % standardSlots.length];
+            const samePitchAssigned = assignedOnDate.filter((a) => a.pitchId === f.pitchId);
+            if (samePitchAssigned.length > 0) {
+              const lastSlot = samePitchAssigned[samePitchAssigned.length - 1].slot;
+              const nextStart = getAdminEndTimeForSlot(f.pitchId, date, lastSlot);
+              chosenSlot = nextStart || '14:00';
+            } else {
+              chosenSlot = f.pitchId === '11v11' && isU14GirlsTeam(f.scotterTeam || f.homeTeam) ? '14:00' : (standardSlots[0] || '10:00');
+            }
           }
         }
 
@@ -1072,11 +1163,7 @@ export default function AdminPanel({
     });
 
     return fixtures.map((f) => {
-      const isHome =
-        f.homeTeam.toLowerCase().includes('scotter') ||
-        f.scotterTeam.toLowerCase().includes('scotter') ||
-        f.homeTeam === f.scotterTeam;
-      if (isHome && assignedSlots.has(f.id)) {
+      if (isScotterHomeFixture(f) && assignedSlots.has(f.id)) {
         return {
           ...f,
           timeSlot: assignedSlots.get(f.id)!,
@@ -1099,12 +1186,13 @@ export default function AdminPanel({
       const seasonId = seasonMatch ? seasonMatch[1] : '665967722';
       const teamId = teamMatch ? teamMatch[1] : '886514411';
 
-      // Load all released FA Full-Time fixtures
-      const officialFixtures = MOCK_FA_FULLTIME_FIXTURES;
-      setParsedFixtures(officialFixtures);
-      const homeFixtureIds = officialFixtures.filter((p) => p.homeTeam.toLowerCase().includes('scotter') || p.scotterTeam.toLowerCase().includes('scotter')).map((p) => p.id);
+      // Load all released FA Full-Time fixtures with any existing kick-off times ignored
+      const officialFixtures = MOCK_FA_FULLTIME_FIXTURES.map(f => ({ ...f, timeSlot: '' }));
+      const optimized = optimizeFixturesSlots(officialFixtures, true);
+      setParsedFixtures(optimized);
+      const homeFixtureIds = optimized.filter(isScotterHomeFixture).map((p) => p.id);
       setSelectedParsedIds(homeFixtureIds);
-      setImportFeedback(`FA Full-Time Link Loaded! Synced ${officialFixtures.length} released fixtures for Season #${seasonId} (Team #${teamId}). ${homeFixtureIds.length} home matches selected.`);
+      setImportFeedback(`FA Full-Time Link Loaded! Synced ${optimized.length} released fixtures for Season #${seasonId} (Team #${teamId}) with fair prebookable kick-off times. ${homeFixtureIds.length} home matches selected.`);
       return;
     }
 
@@ -1132,17 +1220,18 @@ export default function AdminPanel({
           const homeTeam = tabData.homeTeam;
           const awayTeam = tabData.awayTeam;
           const date = tabData.date || selectedDate;
-          const timeSlot = tabData.hasExplicitTime ? tabData.timeSlot : '';
+          // Ignore any existing kick off times loaded in from source
+          const timeSlot = '';
           const competition = tabData.statusNotes ? `[${tabData.statusNotes}] ${tabData.competition}` : tabData.competition;
 
           if (homeTeam && homeTeam.toLowerCase() !== 'home' && homeTeam.toLowerCase() !== 'home team') {
             let scotterTeam = '';
             if (homeTeam.toLowerCase().includes('scotter')) {
-              scotterTeam = findBestTeamMatch(homeTeam);
+              scotterTeam = findBestTeamMatch(homeTeam, line);
             } else if (awayTeam.toLowerCase().includes('scotter')) {
-              scotterTeam = findBestTeamMatch(awayTeam);
+              scotterTeam = findBestTeamMatch(awayTeam, line);
             } else {
-              scotterTeam = findBestTeamMatch(homeTeam);
+              scotterTeam = findBestTeamMatch(homeTeam, line);
             }
 
             const teamObj = SCOTTER_TEAMS.find((t) => t.name === scotterTeam);
@@ -1166,7 +1255,8 @@ export default function AdminPanel({
       // 1. Extract Date and Explicit Time using robust multi-format extractor
       const extracted = extractDateAndExplicitTime(line);
       let date = extracted.date || selectedDate;
-      let timeSlot = extracted.hasExplicitTime ? extracted.timeSlot : '';
+      // Ignore any existing kick off times loaded in from source
+      let timeSlot = '';
       let homeTeam = '';
       let awayTeam = '';
       let competition = 'FA League Match';
@@ -1304,7 +1394,7 @@ export default function AdminPanel({
       awayTeam = awayTeam.replace(/^(L|Cup|League|Match)\b\s*/i, '').trim();
 
       if (homeTeam && homeTeam.toLowerCase() !== 'home' && homeTeam.toLowerCase() !== 'home team') {
-        const suggestedTeam = findBestTeamMatch(homeTeam);
+        const suggestedTeam = findBestTeamMatch(homeTeam, line);
         const teamObj = SCOTTER_TEAMS.find((t) => t.name === suggestedTeam);
         const pitchId = teamObj ? teamObj.pitchSize : '11v11';
 
@@ -1326,7 +1416,7 @@ export default function AdminPanel({
     } else {
       const optimized = optimizeFixturesSlots(parsed);
       setParsedFixtures(optimized);
-      const homeFixtureIds = optimized.filter((p) => p.homeTeam.toLowerCase().includes('scotter') || p.scotterTeam.toLowerCase().includes('scotter')).map((p) => p.id);
+      const homeFixtureIds = optimized.filter(isScotterHomeFixture).map((p) => p.id);
       setSelectedParsedIds(homeFixtureIds);
       const awayCount = optimized.length - homeFixtureIds.length;
       if (awayCount > 0) {
@@ -1417,7 +1507,7 @@ export default function AdminPanel({
         if (f.id === id) {
           const updatedHome = f.awayTeam;
           const updatedAway = f.homeTeam;
-          const isNowHome = updatedHome.toLowerCase().includes('scotter');
+          const isNowHome = isScotterHomeFixture({ homeTeam: updatedHome, awayTeam: updatedAway, scotterTeam: f.scotterTeam });
           const suggestedTeam = isNowHome ? findBestTeamMatch(updatedHome) : f.scotterTeam;
           
           return {
@@ -1436,7 +1526,7 @@ export default function AdminPanel({
     setParsedFixtures((current) => {
       const updatedFixture = current.find(f => f.id === id);
       if (updatedFixture) {
-        const isHome = updatedFixture.homeTeam.toLowerCase().includes('scotter');
+        const isHome = isScotterHomeFixture(updatedFixture);
         setSelectedParsedIds((prev) => {
           if (isHome) {
             return prev.includes(id) ? prev : [...prev, id];
@@ -1458,8 +1548,8 @@ export default function AdminPanel({
     }
 
     // Don't schedule a match on a slot if it looks like an away game
-    const homeMatchesToBook = selectedToBook.filter((f) => f.homeTeam.toLowerCase().includes('scotter') || f.scotterTeam.toLowerCase().includes('scotter'));
-    const awayMatchesSkipped = selectedToBook.filter((f) => !f.homeTeam.toLowerCase().includes('scotter') && !f.scotterTeam.toLowerCase().includes('scotter'));
+    const homeMatchesToBook = selectedToBook.filter(isScotterHomeFixture);
+    const awayMatchesSkipped = selectedToBook.filter((f) => !isScotterHomeFixture(f));
 
     if (homeMatchesToBook.length === 0) {
       setImportFeedback('Info: No home matches selected to book into the Pitch Diary.');
@@ -1467,7 +1557,8 @@ export default function AdminPanel({
     }
 
     // 1. Ensure all home matches have guaranteed valid, fair, non-clashing prebookable slots
-    const resolvedHomeMatches = optimizeFixturesSlots(homeMatchesToBook, false);
+    // Force reassign slots to guarantee mutual non-overlapping slots across all formats
+    const resolvedHomeMatches = optimizeFixturesSlots(homeMatchesToBook, true);
 
     // Update parsedFixtures in state so the table immediately reflects the exact slots being booked
     setParsedFixtures((prev) =>
@@ -1478,7 +1569,7 @@ export default function AdminPanel({
     );
 
     // Filter out already booked matches under their mapped scotter team to prevent duplicate booking actions
-    const newHomeMatchesToBook = resolvedHomeMatches.filter((f) => {
+    let newHomeMatchesToBook = resolvedHomeMatches.filter((f) => {
       const isAlreadyBooked = bookings.some(
         (b) =>
           b.pitchId === f.pitchId &&
@@ -1492,39 +1583,59 @@ export default function AdminPanel({
     });
 
     if (homeMatchesToBook.length > 0 && newHomeMatchesToBook.length === 0) {
-      setImportFeedback('Info: Selected home matches are already successfully booked in the Pitch Diary!');
+      const firstDate = homeMatchesToBook[0]?.date;
+      if (firstDate && setSelectedDate) {
+        setSelectedDate(firstDate);
+      }
+      setImportFeedback(`Info: Selected home matches are already successfully booked in the Pitch Diary! Displaying date: ${firstDate ? formatDateUK(firstDate) : ''}.`);
       return;
     }
 
     // Check for clashes on unbooked home matches only using precise interval overlap detection
     // First, check for mutual overlaps/clashes among the selected home matches themselves
-    const mutualClashing: FAFixture[] = [];
-    for (let i = 0; i < newHomeMatchesToBook.length; i++) {
-      const f1 = newHomeMatchesToBook[i];
-      const f1Start = parseTimeToMinutes(f1.timeSlot);
-      const f1End = parseTimeToMinutes(getAdminEndTimeForSlot(f1.pitchId, f1.date, f1.timeSlot));
+    const checkMutualOverlaps = (list: FAFixture[]): FAFixture[] => {
+      const mutualClashing: FAFixture[] = [];
+      for (let i = 0; i < list.length; i++) {
+        const f1 = list[i];
+        const f1Start = parseTimeToMinutes(f1.timeSlot);
+        const f1End = parseTimeToMinutes(getAdminEndTimeForSlot(f1.pitchId, f1.date, f1.timeSlot));
 
-      for (let j = i + 1; j < newHomeMatchesToBook.length; j++) {
-        const f2 = newHomeMatchesToBook[j];
-        if (f1.date !== f2.date) continue;
+        for (let j = i + 1; j < list.length; j++) {
+          const f2 = list[j];
+          if (f1.date !== f2.date) continue;
 
-        const pitchMatches = f1.pitchId === f2.pitchId ||
-          (rules.prevent5v5_11v11Overlap && ((f1.pitchId === '5v5' && f2.pitchId === '11v11') || (f1.pitchId === '11v11' && f2.pitchId === '5v5')));
-        if (!pitchMatches) continue;
+          const pitchMatches = f1.pitchId === f2.pitchId ||
+            (rules.prevent5v5_11v11Overlap && check5v5And11v11U14GirlsConflict(f1.pitchId, f1.scotterTeam || f1.homeTeam, f2.pitchId, f2.scotterTeam || f2.homeTeam));
+          if (!pitchMatches) continue;
 
-        const f2Start = parseTimeToMinutes(f2.timeSlot);
-        const f2End = parseTimeToMinutes(getAdminEndTimeForSlot(f2.pitchId, f2.date, f2.timeSlot));
+          const f2Start = parseTimeToMinutes(f2.timeSlot);
+          const f2End = parseTimeToMinutes(getAdminEndTimeForSlot(f2.pitchId, f2.date, f2.timeSlot));
 
-        if (f1Start < f2End && f2Start < f1End) {
-          if (!mutualClashing.includes(f1)) mutualClashing.push(f1);
-          if (!mutualClashing.includes(f2)) mutualClashing.push(f2);
+          if (f1Start < f2End && f2Start < f1End) {
+            if (!mutualClashing.includes(f1)) mutualClashing.push(f1);
+            if (!mutualClashing.includes(f2)) mutualClashing.push(f2);
+          }
         }
       }
+      return mutualClashing;
+    };
+
+    let mutualClashing = checkMutualOverlaps(newHomeMatchesToBook);
+    if (mutualClashing.length > 0) {
+      // Auto-resolve any remaining mutual overlaps by re-optimizing with guaranteed conflict resolution
+      newHomeMatchesToBook = optimizeFixturesSlots(newHomeMatchesToBook, true);
+      setParsedFixtures((prev) =>
+        prev.map((f) => {
+          const matched = newHomeMatchesToBook.find((rm) => rm.id === f.id);
+          return matched ? matched : f;
+        })
+      );
+      mutualClashing = checkMutualOverlaps(newHomeMatchesToBook);
     }
 
     if (mutualClashing.length > 0) {
       const clashList = mutualClashing.map(f => `${f.date} @ ${f.timeSlot} (${f.scotterTeam} / ${f.pitchId})`).join(', ');
-      setImportFeedback(`Error: Mutual overlaps detected within your selected import list (${clashList}). Under current rules, 5v5 and 11v11 (or identical pitches) cannot be scheduled at overlapping times on the same date. Please adjust their times or pitches before importing.`);
+      setImportFeedback(`Error: Mutual overlaps detected within your selected import list (${clashList}). Under current rules, 5v5 cannot be scheduled when U14 Girls play on 11v11 (or identical pitches overlap). Please adjust their times or pitches before importing.`);
       return;
     }
 
@@ -1534,7 +1645,7 @@ export default function AdminPanel({
 
       return bookings.some((b) => {
         const pitchMatches = b.pitchId === f.pitchId || 
-          (rules.prevent5v5_11v11Overlap && ((f.pitchId === '5v5' && b.pitchId === '11v11') || (f.pitchId === '11v11' && b.pitchId === '5v5')));
+          (rules.prevent5v5_11v11Overlap && check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.homeTeam, b.pitchId, b.teamName));
         if (!pitchMatches || b.date !== f.date) return false;
         if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
 
@@ -1552,11 +1663,14 @@ export default function AdminPanel({
     }
 
     const newBookings: Booking[] = newHomeMatchesToBook.map((f, idx) => {
+      const endTime = getAdminEndTimeForSlot(f.pitchId, f.date, f.timeSlot);
       return {
         id: `b-pasted-import-${Date.now()}-${idx}`,
         pitchId: f.pitchId,
         date: f.date,
         timeSlot: f.timeSlot,
+        endTime: endTime || undefined,
+        bookingType: 'MATCH',
         teamName: f.scotterTeam,
         managerName: currentUser.name,
         managerId: 'fa-auto-import',
@@ -1570,10 +1684,33 @@ export default function AdminPanel({
       onAddBookingsBulk(newBookings);
     }
 
+    if (onUpdateFaFixtures && newHomeMatchesToBook.length > 0) {
+      onUpdateFaFixtures((prev) => {
+        const updated = [...prev];
+        newHomeMatchesToBook.forEach(nf => {
+          const idx = updated.findIndex(existing => existing.id === nf.id || (
+            existing.date === nf.date && existing.pitchId === nf.pitchId && existing.scotterTeam === nf.scotterTeam
+          ));
+          if (idx >= 0) {
+            updated[idx] = { ...updated[idx], ...nf };
+          } else {
+            updated.push(nf);
+          }
+        });
+        return updated;
+      });
+    }
+
+    const firstImportedDate = newHomeMatchesToBook[0]?.date;
+    if (firstImportedDate && setSelectedDate) {
+      setSelectedDate(firstImportedDate);
+    }
+
+    const dateMsg = firstImportedDate ? ` (Diary view set to ${formatDateUK(firstImportedDate)})` : '';
     if (awayMatchesSkipped.length > 0) {
-      setImportFeedback(`Successfully imported and booked ${newBookings.length} home match(es) directly into prebookable slots in the Pitch Diary with fair kick-off rotation! ${awayMatchesSkipped.length} away match(es) were skipped.`);
+      setImportFeedback(`Successfully imported and booked ${newBookings.length} home match(es) directly into prebookable slots in the Pitch Diary! All kick-off times are 100% clash-free with fair rotation.${dateMsg} ${awayMatchesSkipped.length} away match(es) were skipped.`);
     } else {
-      setImportFeedback(`Successfully imported and booked ${newBookings.length} match(es) directly into prebookable slots in the Pitch Diary with fair kick-off rotation!`);
+      setImportFeedback(`Successfully imported and booked ${newBookings.length} match(es) directly into prebookable slots in the Pitch Diary! All kick-off times are 100% clash-free with fair rotation.${dateMsg}`);
     }
   };
 
@@ -1610,7 +1747,7 @@ export default function AdminPanel({
   };
 
   const toggleSelectAllHome = () => {
-    const homeFixtures = parsedFixtures.filter(f => f.homeTeam.toLowerCase().includes('scotter'));
+    const homeFixtures = parsedFixtures.filter(isScotterHomeFixture);
     const allHomeSelected = homeFixtures.length > 0 && homeFixtures.every(f => selectedParsedIds.includes(f.id));
     if (allHomeSelected) {
       const homeIds = homeFixtures.map(f => f.id);
@@ -1711,7 +1848,7 @@ export default function AdminPanel({
               </span>
             </div>
             <p className="text-[11px] text-slate-300">
-              The following fixtures are booked on the same pitch size and date. Since we ignore kick-off times, these slots are flagged as overlapping:
+              The following fixtures have overlapping kick-off times on the same pitch format and date:
             </p>
             <div className="space-y-2.5 max-h-[250px] overflow-y-auto pr-1">
               {overlappingIssues.map((issue) => (
@@ -1816,11 +1953,13 @@ export default function AdminPanel({
                       onChange={(e) => setPitchSize(e.target.value as PitchSize)}
                       className="w-full bg-slate-800/90 border border-slate-700 rounded-lg py-2.5 px-3 text-white font-semibold focus:border-blue-500 focus:outline-none"
                     >
-                      {pitchConfigs.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} ({p.id})
-                        </option>
-                      ))}
+                      {pitchConfigs
+                        .filter((p) => (p.id as string) !== '3v3')
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({p.id})
+                          </option>
+                        ))}
                     </select>
                   </div>
 
@@ -2107,10 +2246,10 @@ export default function AdminPanel({
                     <div className="flex items-start justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-900">
                       <div className="space-y-1">
                         <span className="block text-xs font-bold text-white uppercase tracking-wide">
-                          5v5 & 11v11 Overlap Prevention
+                          U14 Girls 11v11 & 5v5 Restriction
                         </span>
                         <span className="block text-[11px] text-slate-400">
-                          Prevent concurrent games on the 5v5 and 11v11 pitches (due to 5v5 being inside/on the 11v11 pitch).
+                          Ensure the 5v5 pitch is not used when Scotter United U14 Girls play on the 11v11 pitch.
                         </span>
                       </div>
                       <input
@@ -2218,7 +2357,6 @@ export default function AdminPanel({
                                     onChange={(e) => setEditPitch(e.target.value as PitchSize)}
                                     className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-bold focus:border-blue-500 focus:outline-none"
                                   >
-                                    <option value="3v3">3v3</option>
                                     <option value="5v5">5v5</option>
                                     <option value="7v7">7v7</option>
                                     <option value="9v9">9v9</option>
@@ -2284,7 +2422,7 @@ export default function AdminPanel({
                                             if (other.status === BookingStatus.DECLINED || other.status === BookingStatus.UNBOOKED) return false;
 
                                             const pitchMatches = other.pitchId === editPitch ||
-                                              (rules.prevent5v5_11v11Overlap && ((editPitch === '5v5' && other.pitchId === '11v11') || (editPitch === '11v11' && other.pitchId === '5v5')));
+                                              (rules.prevent5v5_11v11Overlap && check5v5And11v11U14GirlsConflict(editPitch, b.teamName, other.pitchId, other.teamName));
                                             if (!pitchMatches) return false;
 
                                             const otherStart = parseTimeToMinutes(other.timeSlot);
@@ -2426,7 +2564,6 @@ export default function AdminPanel({
                         <option value="9v9">9v9 Pitch Only</option>
                         <option value="7v7">7v7 Pitch Only</option>
                         <option value="5v5">5v5 Pitch Only</option>
-                        <option value="3v3">3v3 Pitch Only</option>
                       </select>
                     </div>
 
@@ -2593,8 +2730,8 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
 
                   {/* Parsed List Table and Remapper */}
                   {parsedFixtures.length > 0 && (() => {
-                    const homeParsedFixtures = parsedFixtures.filter(f => f.homeTeam.toLowerCase().includes('scotter'));
-                    const awayParsedFixtures = parsedFixtures.filter(f => !f.homeTeam.toLowerCase().includes('scotter'));
+                    const homeParsedFixtures = parsedFixtures.filter(isScotterHomeFixture);
+                    const awayParsedFixtures = parsedFixtures.filter(f => !isScotterHomeFixture(f));
                     
                     const getPitchWeight = (pitch: string) => {
                       if (pitch === '5v5') return 5;

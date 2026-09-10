@@ -21,11 +21,13 @@ import {
   BookOpen,
   Search,
   Trash2,
-  MapPin
+  MapPin,
+  Archive,
+  X
 } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, PitchConfig, User as UserType } from '../types';
 import AdminPanel from './AdminPanel';
-import { canManagerUnbook, isTeamMatch, parseDateLocal, formatDateLocal, formatDateUK } from '../utils/bookingUtils';
+import { canManagerUnbook, isTeamMatch, parseDateLocal, formatDateLocal, formatDateUK, check5v5And11v11U14GirlsConflict } from '../utils/bookingUtils';
 import { MOCK_FA_FULLTIME_FIXTURES, FAFixture } from '../mockData';
 
 interface PitchDiaryProps {
@@ -79,9 +81,40 @@ export default function PitchDiary({
   // Sorter / Filter States for the Team Pitch List (underneath calendar)
   const [filterManagerOnly, setFilterManagerOnly] = useState<boolean>(!!currentUser.teamName);
   const [fixturePitchFilter, setFixturePitchFilter] = useState<string>('ALL');
-  const [fixtureDateFilter, setFixtureDateFilter] = useState<string>('ALL');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+  const [showArchived, setShowArchived] = useState<boolean>(false);
   const [teamSearchQuery, setTeamSearchQuery] = useState<string>('');
   const [selectedUnifiedIds, setSelectedUnifiedIds] = useState<string[]>([]);
+
+  // Exclude legacy 3v3 format completely from visible pitch columns
+  const visiblePitchConfigs = React.useMemo(() => {
+    return pitchConfigs.filter(p => (p.id as string) !== '3v3' && !p.name?.toLowerCase().includes('3v3'));
+  }, [pitchConfigs]);
+
+  // Current local date string for distinguishing previous vs upcoming fixtures
+  const todayStr = formatDateLocal(new Date());
+
+  // Count past/archived fixtures before today
+  const totalArchivedCount = React.useMemo(() => {
+    let count = 0;
+    faFixtures.forEach((f) => {
+      if (f.date < todayStr) {
+        if (!filterManagerOnly || !currentUser.teamName || isTeamMatch(currentUser.teamName, f.scotterTeam)) {
+          count++;
+        }
+      }
+    });
+    bookings.forEach((b) => {
+      if (b.date < todayStr && b.status !== BookingStatus.DECLINED) {
+        if (!filterManagerOnly || !currentUser.teamName || isTeamMatch(currentUser.teamName, b.teamName)) {
+          const isMapped = faFixtures.some(f => f.pitchId === b.pitchId && f.date === b.date && f.timeSlot === b.timeSlot);
+          if (!isMapped) count++;
+        }
+      }
+    });
+    return count;
+  }, [faFixtures, bookings, todayStr, filterManagerOnly, currentUser.teamName]);
 
   // Automatically reset inline bulk confirmation if selection is cleared
   useEffect(() => {
@@ -140,7 +173,7 @@ export default function PitchDiary({
   // Show each of the hours between 9am and 9pm on weekdays.
   // Show prebook slots 09:30, 10:45, 12:00 on Saturdays and Sundays.
   const isWeekend = (() => {
-    const d = new Date(selectedDate);
+    const d = parseDateLocal(selectedDate);
     const day = d.getDay();
     return day === 0 || day === 6; // Sunday or Saturday
   })();
@@ -161,13 +194,22 @@ export default function PitchDiary({
   // 2. Build Unified Team Fixtures & Bookings List underneath
   // Filter FA full time fixtures matching criteria
   const filteredFAFixtures = faFixtures.filter((f) => {
+    // Archive filter: Hide previous fixtures before today unless showArchived is true
+    if (!showArchived && f.date < todayStr) {
+      return false;
+    }
+
     if (currentUser.role === 'MANAGER' && filterManagerOnly && (!currentUser.teamName || !isTeamMatch(currentUser.teamName, f.scotterTeam))) {
       return false;
     }
     if (fixturePitchFilter !== 'ALL' && f.pitchId !== fixturePitchFilter) {
       return false;
     }
-    if (fixtureDateFilter !== 'ALL' && f.date !== fixtureDateFilter) {
+    // Between date filter
+    if (dateFrom && f.date < dateFrom) {
+      return false;
+    }
+    if (dateTo && f.date > dateTo) {
       return false;
     }
     if (teamSearchQuery.trim() && !f.scotterTeam.toLowerCase().includes(teamSearchQuery.toLowerCase())) {
@@ -179,13 +221,23 @@ export default function PitchDiary({
   // Filter other non-FA manual bookings matching criteria
   const manualBookings = bookings.filter((b) => {
     if (b.status === BookingStatus.DECLINED) return false;
+
+    // Archive filter: Hide previous bookings before today unless showArchived is true
+    if (!showArchived && b.date < todayStr) {
+      return false;
+    }
+
     if (currentUser.role === 'MANAGER' && filterManagerOnly && (!currentUser.teamName || !isTeamMatch(currentUser.teamName, b.teamName))) {
       return false;
     }
     if (fixturePitchFilter !== 'ALL' && b.pitchId !== fixturePitchFilter) {
       return false;
     }
-    if (fixtureDateFilter !== 'ALL' && b.date !== fixtureDateFilter) {
+    // Between date filter
+    if (dateFrom && b.date < dateFrom) {
+      return false;
+    }
+    if (dateTo && b.date > dateTo) {
       return false;
     }
     if (teamSearchQuery.trim() && !b.teamName.toLowerCase().includes(teamSearchQuery.toLowerCase())) {
@@ -213,6 +265,8 @@ export default function PitchDiary({
     title: string;
     opponent?: string;
     competition?: string;
+    scotterTeam?: string;
+    teamName?: string;
     booking?: Booking;
   }
 
@@ -232,6 +286,8 @@ export default function PitchDiary({
       title: `${f.homeTeam} vs ${f.awayTeam}`,
       opponent: f.homeTeam === f.scotterTeam ? f.awayTeam : f.homeTeam,
       competition: f.competition,
+      scotterTeam: f.scotterTeam,
+      teamName: f.scotterTeam,
       booking
     });
   });
@@ -246,6 +302,8 @@ export default function PitchDiary({
       pitchId: b.pitchId,
       title: `${b.teamName} - Custom Session`,
       competition: b.notes || 'Training/Friendly Match',
+      teamName: b.teamName,
+      scotterTeam: b.teamName,
       booking: b
     });
   });
@@ -299,7 +357,7 @@ export default function PitchDiary({
         const h = Math.floor(totalMinutes / 60);
         const m = totalMinutes % 60;
         return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-      } else if (pId === '5v5' || pId === '3v3') {
+      } else if (pId === '5v5') {
         const [hStr, mStr] = slot.split(':');
         const h = parseInt(hStr, 10) + 1;
         return `${String(h).padStart(2, '0')}:${mStr}`;
@@ -318,20 +376,18 @@ export default function PitchDiary({
   };
 
   const WEEKEND_PREBOOKED_BLOCKS: Record<string, Array<{ start: string; end: string }>> = {
-    '3v3': [
-      { start: '09:45', end: '10:45' },
-      { start: '10:45', end: '11:45' },
-      { start: '11:45', end: '12:45' },
-    ],
     '5v5': [
       { start: '09:45', end: '10:45' },
       { start: '10:45', end: '11:45' },
       { start: '11:45', end: '12:45' },
+      { start: '12:45', end: '13:45' },
+      { start: '13:45', end: '14:45' },
     ],
     '7v7': [
       { start: '09:30', end: '10:45' },
       { start: '10:45', end: '12:00' },
       { start: '12:00', end: '13:15' },
+      { start: '13:30', end: '14:45' },
     ],
     '9v9': [
       { start: '09:30', end: '11:00' },
@@ -342,7 +398,6 @@ export default function PitchDiary({
       { start: '10:00', end: '12:00' },
       { start: '12:00', end: '14:00' },
       { start: '14:00', end: '16:00' },
-      { start: '16:00', end: '18:00' },
     ],
   };
 
@@ -351,7 +406,16 @@ export default function PitchDiary({
     const day = d.getDay();
     const isWeekend = day === 0 || day === 6;
     if (isWeekend) {
-      return WEEKEND_PREBOOKED_BLOCKS[pitchId] || [];
+      const config = pitchConfigs.find(p => p.id === pitchId);
+      const configuredSlots = config?.defaultSlots || [];
+      const fallbackBlocks = WEEKEND_PREBOOKED_BLOCKS[pitchId] || [];
+
+      // Combine configured slot times and fallback blocks so all default and custom slots are visible
+      const allStarts = Array.from(new Set([...configuredSlots, ...fallbackBlocks.map(b => b.start)])).sort();
+      return allStarts.map(start => {
+        const existing = fallbackBlocks.find(b => b.start === start);
+        return existing || { start, end: getEndTimeForSlot(pitchId as PitchSize, dateStr, start) };
+      });
     }
     return [];
   };
@@ -424,6 +488,7 @@ export default function PitchDiary({
           bookings={bookings}
           pitchConfigs={pitchConfigs}
           selectedDate={selectedDate}
+          setSelectedDate={setSelectedDate}
           onAddBookingsBulk={onAddBookingsBulk}
           onCancelBooking={onCancelBooking}
           onUpdateBooking={onUpdateBooking}
@@ -609,9 +674,9 @@ export default function PitchDiary({
               </div>
               <div 
                 className="flex-1 grid divide-x divide-slate-200"
-                style={{ gridTemplateColumns: `repeat(${pitchConfigs.length}, minmax(0, 1fr))` }}
+                style={{ gridTemplateColumns: `repeat(${visiblePitchConfigs.length}, minmax(0, 1fr))` }}
               >
-                {pitchConfigs.map((pitch) => {
+                {visiblePitchConfigs.map((pitch) => {
                   const formatMatch = pitch.name.match(/(\d+v\d+)/i);
                   const cleanName = formatMatch ? formatMatch[1].toUpperCase() : pitch.name;
                   return (
@@ -653,9 +718,9 @@ export default function PitchDiary({
               {/* Pitch Columns Container */}
               <div 
                 className="flex-1 grid relative divide-x divide-slate-200 bg-white"
-                style={{ gridTemplateColumns: `repeat(${pitchConfigs.length}, minmax(0, 1fr))` }}
+                style={{ gridTemplateColumns: `repeat(${visiblePitchConfigs.length}, minmax(0, 1fr))` }}
               >
-                {pitchConfigs.map((pitch) => {
+                {visiblePitchConfigs.map((pitch) => {
                   // Get bookings for this pitch and date
                   const activeBookings = bookings.filter(
                     (b) =>
@@ -1020,9 +1085,19 @@ export default function PitchDiary({
               <Filter className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-extrabold text-slate-900 uppercase tracking-tight">Team Fixtures & Pitch Booking Status</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-extrabold text-slate-900 uppercase tracking-tight">Team Fixtures & Pitch Booking Status</h3>
+                {!showArchived && totalArchivedCount > 0 && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200" title="Previous fixtures before today are archived">
+                    <Archive className="w-3 h-3 mr-1 text-slate-500" />
+                    {totalArchivedCount} archived
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-slate-500 font-medium">
-                Monitor upcoming league fixtures and book match slots from this unified panel.
+                {showArchived
+                  ? 'Showing all fixtures including past & archived matches.'
+                  : `Showing fixtures from today (${formatDateUK(todayStr)}). Previous fixtures are in archive.`}
               </p>
             </div>
           </div>
@@ -1052,28 +1127,65 @@ export default function PitchDiary({
                 className="bg-slate-50 border-2 border-slate-200 rounded-lg py-1 px-2 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-900"
               >
                 <option value="ALL">All Formats</option>
-                {pitchConfigs.map(p => (
+                {visiblePitchConfigs.map(p => (
                   <option key={p.id} value={p.id}>{p.id}</option>
                 ))}
               </select>
             </div>
 
-            {/* Date Filter */}
-            <div className="flex items-center space-x-1">
-              <span className="text-[10px] font-bold uppercase text-slate-400">Date:</span>
-              <select
-                value={fixtureDateFilter}
-                onChange={(e) => setFixtureDateFilter(e.target.value)}
-                className="bg-slate-50 border-2 border-slate-200 rounded-lg py-1 px-2 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-900"
-              >
-                <option value="ALL">All Dates</option>
-                {uniqueDates.map(date => (
-                  <option key={date} value={date}>
-                    {formatDateUK(date, { includeYear: true })}
-                  </option>
-                ))}
-              </select>
+            {/* Between Date Filter */}
+            <div className="flex items-center space-x-1.5">
+              <span className="text-[10px] font-bold uppercase text-slate-400">Between:</span>
+              <div className="flex items-center space-x-1 bg-slate-50 border-2 border-slate-200 rounded-lg py-1 px-2 text-xs font-bold text-slate-700">
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+                  title="From date"
+                />
+                <span className="text-[10px] font-bold text-slate-400 uppercase px-0.5">to</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+                  title="To date"
+                />
+                {(dateFrom || dateTo) && (
+                  <button
+                    onClick={() => { setDateFrom(''); setDateTo(''); }}
+                    className="text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer ml-1"
+                    title="Clear date range"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
+
+            {/* Archive / Previous Fixtures Checkbox Toggle */}
+            <label className={`flex items-center space-x-1.5 px-2.5 py-1.5 border-2 rounded-lg cursor-pointer transition-colors text-xs font-bold select-none ${
+              showArchived
+                ? 'bg-blue-50 border-blue-400 text-blue-900'
+                : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+            }`}>
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+                className="rounded border-slate-300 text-blue-900 focus:ring-blue-900 w-3.5 h-3.5 cursor-pointer"
+              />
+              <Archive className={`w-3.5 h-3.5 ${showArchived ? 'text-blue-900' : 'text-slate-500'}`} />
+              <span>View previous or archived</span>
+              {totalArchivedCount > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ml-1 ${
+                  showArchived ? 'bg-blue-900 text-white' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {totalArchivedCount}
+                </span>
+              )}
+            </label>
 
             {/* Search Team */}
             <div className="flex items-center space-x-1">
@@ -1091,6 +1203,24 @@ export default function PitchDiary({
             </div>
           </div>
         </div>
+
+        {/* Notice when previous fixtures are archived and hidden */}
+        {!showArchived && totalArchivedCount > 0 && (
+          <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600">
+            <div className="flex items-center space-x-2">
+              <Archive className="w-4 h-4 text-slate-500 shrink-0" />
+              <span>
+                <strong>{totalArchivedCount} previous fixture{totalArchivedCount !== 1 ? 's' : ''}</strong> prior to today ({formatDateUK(todayStr)}) are archived and hidden from view.
+              </span>
+            </div>
+            <button
+              onClick={() => setShowArchived(true)}
+              className="text-xs font-bold text-blue-900 hover:text-blue-950 underline underline-offset-2 ml-3 cursor-pointer shrink-0"
+            >
+              Show archived
+            </button>
+          </div>
+        )}
 
         {/* Bulk Unbooking / Deletion Action Bar */}
         {currentUser.role === 'ADMIN' && selectedUnifiedIds.length > 0 && (
@@ -1188,7 +1318,7 @@ export default function PitchDiary({
                             if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
 
                             const pitchMatches = b.pitchId === f.pitchId || 
-                              ((f.pitchId === '5v5' && b.pitchId === '11v11') || (f.pitchId === '11v11' && b.pitchId === '5v5'));
+                              check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.teamName || f.title, b.pitchId, b.teamName);
                             if (!pitchMatches) return false;
 
                             const bStart = parseTimeToMinutes(b.timeSlot);
@@ -1203,7 +1333,7 @@ export default function PitchDiary({
                             if (item.date !== f.date) return false;
 
                             const pitchMatches = item.pitchId === f.pitchId ||
-                              ((f.pitchId === '5v5' && item.pitchId === '11v11') || (f.pitchId === '11v11' && item.pitchId === '5v5'));
+                              check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.teamName || f.title, item.pitchId, item.scotterTeam || item.teamName || item.title);
                             if (!pitchMatches) return false;
 
                             const itemStart = parseTimeToMinutes(item.timeSlot);
@@ -1278,7 +1408,7 @@ export default function PitchDiary({
                       if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
 
                       const pitchMatches = b.pitchId === f.pitchId || 
-                        ((f.pitchId === '5v5' && b.pitchId === '11v11') || (f.pitchId === '11v11' && b.pitchId === '5v5'));
+                        check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.teamName || f.title, b.pitchId, b.teamName);
                       if (!pitchMatches) return false;
 
                       const bStart = parseTimeToMinutes(b.timeSlot);
@@ -1292,7 +1422,7 @@ export default function PitchDiary({
                       if (item.date !== f.date) return false;
 
                       const pitchMatches = item.pitchId === f.pitchId ||
-                        ((f.pitchId === '5v5' && item.pitchId === '11v11') || (f.pitchId === '11v11' && item.pitchId === '5v5'));
+                        check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.teamName || f.title, item.pitchId, item.scotterTeam || item.teamName || item.title);
                       if (!pitchMatches) return false;
 
                       const itemStart = parseTimeToMinutes(item.timeSlot);
@@ -1403,8 +1533,19 @@ export default function PitchDiary({
         {/* Unified Table display */}
         <div className="overflow-x-auto border border-slate-200 rounded-xl">
           {unifiedList.length === 0 ? (
-            <div className="text-center py-12 text-slate-400 bg-white font-medium text-xs">
-              No league fixtures or bookings found matching the active filter criteria.
+            <div className="text-center py-12 px-4 text-slate-400 bg-white font-medium text-xs space-y-2">
+              <p>No fixtures or bookings found matching the active filter criteria.</p>
+              {!showArchived && totalArchivedCount > 0 && (
+                <div>
+                  <button
+                    onClick={() => setShowArchived(true)}
+                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-blue-50 text-blue-900 hover:bg-blue-100 font-extrabold rounded-lg text-xs transition-colors cursor-pointer border border-blue-200"
+                  >
+                    <Archive className="w-3.5 h-3.5" />
+                    <span>View {totalArchivedCount} previous or archived fixture{totalArchivedCount !== 1 ? 's' : ''}</span>
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <table className="min-w-full divide-y divide-slate-200 bg-white text-left text-xs">
@@ -1482,6 +1623,12 @@ export default function PitchDiary({
                             }`}>
                               {item.type === 'FA_FIXTURE' ? 'FA Full-Time' : 'Custom Session'}
                             </span>
+                            {item.date < todayStr && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-slate-100 text-slate-600 border border-slate-200">
+                                <Archive className="w-2.5 h-2.5 mr-1 text-slate-500" />
+                                Archived
+                              </span>
+                            )}
                           </div>
                         </div>
                       </td>

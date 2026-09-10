@@ -28,7 +28,8 @@ export default function SlotConfigurator({
   const [newSlotTime, setNewSlotTime] = useState('');
   const [adminError, setAdminError] = useState('');
 
-  const activeConfig = pitchConfigs.find((p) => p.id === selectedPitchId) || pitchConfigs[0];
+  const visiblePitchConfigs = pitchConfigs.filter((p) => (p.id as string) !== '3v3' && !p.name?.toLowerCase().includes('3v3'));
+  const activeConfig = visiblePitchConfigs.find((p) => p.id === selectedPitchId) || visiblePitchConfigs[0] || pitchConfigs[0];
 
   // Add a slot as Admin
   const handleAdminAddSlot = (e: React.FormEvent) => {
@@ -75,8 +76,8 @@ export default function SlotConfigurator({
           </p>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-          {pitchConfigs.map((p) => {
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {visiblePitchConfigs.map((p) => {
             const isSelected = p.id === selectedPitchId;
             return (
               <button

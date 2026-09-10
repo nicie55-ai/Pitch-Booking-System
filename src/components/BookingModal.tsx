@@ -8,7 +8,7 @@ import { motion } from 'motion/react';
 import { X, Calendar, Clock, MapPin, Clipboard, FileText, AlertTriangle } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, User } from '../types';
 import { SCOTTER_TEAMS, FAFixture } from '../mockData';
-import { parseDateLocal, formatDateUK } from '../utils/bookingUtils';
+import { parseDateLocal, formatDateUK, check5v5And11v11U14GirlsConflict } from '../utils/bookingUtils';
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -87,7 +87,7 @@ export default function BookingModal({
           duration = 90;
         } else if (pId === '7v7') {
           duration = 75;
-        } else if (pId === '5v5' || pId === '3v3') {
+        } else if (pId === '5v5') {
           duration = 60;
         }
       }
@@ -191,11 +191,12 @@ export default function BookingModal({
       const slotStart = parseTimeToMinutes(slot);
       const slotEnd = parseTimeToMinutes(getEndTimeForSlot(pitchId, date, slot, bookingType));
 
+      const activeTeam = (currentUser.role === 'ADMIN' ? adminSelectedTeam : currentUser.teamName) || '';
       let hasClash = existingBookings.some((b) => {
         if (b.id === selectedBookingId || b.date !== date) return false;
         
         const pitchMatches = b.pitchId === pitchId || 
-          ((pitchId === '5v5' && b.pitchId === '11v11') || (pitchId === '11v11' && b.pitchId === '5v5'));
+          check5v5And11v11U14GirlsConflict(pitchId, activeTeam, b.pitchId, b.teamName);
           
         if (!pitchMatches) return false;
         if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
@@ -211,7 +212,7 @@ export default function BookingModal({
           if (f.date !== date) return false;
           
           const pitchMatches = f.pitchId === pitchId || 
-            ((pitchId === '5v5' && f.pitchId === '11v11') || (pitchId === '11v11' && f.pitchId === '5v5'));
+            check5v5And11v11U14GirlsConflict(pitchId, activeTeam, f.pitchId, f.scotterTeam || f.homeTeam);
           if (!pitchMatches) return false;
 
           const associatedBooking = existingBookings.find(
@@ -246,8 +247,12 @@ export default function BookingModal({
       if (isWeekend) {
         if (selected === '11v11') {
           baseSlots = ['10:00', '12:00'];
-        } else {
-          baseSlots = ['09:30', '10:45', '12:00'];
+        } else if (selected === '9v9') {
+          baseSlots = ['09:30', '11:00', '12:30'];
+        } else if (selected === '7v7') {
+          baseSlots = ['09:30', '10:45', '12:00', '13:30'];
+        } else if (selected === '5v5') {
+          baseSlots = ['09:45', '10:45', '11:45'];
         }
       } else {
         baseSlots = [
@@ -259,12 +264,13 @@ export default function BookingModal({
       return baseSlots.filter((slot) => {
         const slotStart = parseTimeToMinutes(slot);
         const slotEnd = parseTimeToMinutes(getEndTimeForSlot(selected, date, slot, bookingType));
+        const activeTeam = (currentUser.role === 'ADMIN' ? adminSelectedTeam : currentUser.teamName) || '';
 
         let hasClash = existingBookings.some((b) => {
           if (b.id === selectedBookingId || b.date !== date) return false;
           
           const pitchMatches = b.pitchId === selected || 
-            ((selected === '5v5' && b.pitchId === '11v11') || (selected === '11v11' && b.pitchId === '5v5'));
+            check5v5And11v11U14GirlsConflict(selected, activeTeam, b.pitchId, b.teamName);
             
           if (!pitchMatches) return false;
           if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
@@ -280,7 +286,7 @@ export default function BookingModal({
             if (f.date !== date) return false;
             
             const pitchMatches = f.pitchId === selected || 
-              ((selected === '5v5' && f.pitchId === '11v11') || (selected === '11v11' && f.pitchId === '5v5'));
+              check5v5And11v11U14GirlsConflict(selected, activeTeam, f.pitchId, f.scotterTeam || f.homeTeam);
             if (!pitchMatches) return false;
 
             const associatedBooking = existingBookings.find(
@@ -375,12 +381,14 @@ export default function BookingModal({
       return;
     }
 
+    const teamToCheck = (currentUser.role === 'ADMIN' ? adminSelectedTeam : currentUser.teamName) || '';
+
     // Check if there's already an approved or pending booking for this pitch, date, and slot
     const clash = existingBookings.find((b) => {
       if (b.id === selectedBookingId || b.date !== date) return false;
       
       const pitchMatches = b.pitchId === pitchId || 
-        ((pitchId === '5v5' && b.pitchId === '11v11') || (pitchId === '11v11' && b.pitchId === '5v5'));
+        check5v5And11v11U14GirlsConflict(pitchId, teamToCheck, b.pitchId, b.teamName);
         
       if (!pitchMatches) return false;
       if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
@@ -392,6 +400,12 @@ export default function BookingModal({
     });
 
     if (clash) {
+      if (check5v5And11v11U14GirlsConflict(pitchId, teamToCheck, clash.pitchId, clash.teamName)) {
+        setError(
+          `Pitch Restriction: The 5v5 pitch cannot be used when Scotter United U14 Girls are playing on the 11v11 pitch (${clash.timeSlot} to ${clash.endTime || getEndTimeForSlot(clash.pitchId, clash.date, clash.timeSlot)}).`
+        );
+        return;
+      }
       const statusText = clash.status === BookingStatus.APPROVED ? 'already booked' : 'currently requested';
       setError(
         `This slot overlaps with a session ${statusText} by ${clash.teamName} (${clash.managerName}) from ${clash.timeSlot} to ${clash.endTime || getEndTimeForSlot(clash.pitchId, clash.date, clash.timeSlot)}. Please select another time or pitch.`
@@ -404,7 +418,7 @@ export default function BookingModal({
         if (f.date !== date) return false;
         
         const pitchMatches = f.pitchId === pitchId || 
-          ((pitchId === '5v5' && f.pitchId === '11v11') || (pitchId === '11v11' && f.pitchId === '5v5'));
+          check5v5And11v11U14GirlsConflict(pitchId, teamToCheck, f.pitchId, f.scotterTeam || f.homeTeam);
         if (!pitchMatches) return false;
 
         const associatedBooking = existingBookings.find(
@@ -421,6 +435,12 @@ export default function BookingModal({
       });
 
       if (clashFixture) {
+        if (check5v5And11v11U14GirlsConflict(pitchId, teamToCheck, clashFixture.pitchId, clashFixture.scotterTeam || clashFixture.homeTeam)) {
+          setError(
+            `Pitch Restriction: The 5v5 pitch cannot be used when Scotter United U14 Girls play on the 11v11 pitch (${clashFixture.homeTeam} vs ${clashFixture.awayTeam} at ${clashFixture.timeSlot}).`
+          );
+          return;
+        }
         setError(
           `This slot overlaps with a scheduled FA fixture: ${clashFixture.homeTeam} vs ${clashFixture.awayTeam} on the ${clashFixture.pitchId} pitch at ${clashFixture.timeSlot}. Please select another time or pitch.`
         );
@@ -429,7 +449,6 @@ export default function BookingModal({
     }
 
     // Raise an issue if same team already booked on same date
-    const teamToCheck = currentUser.role === 'ADMIN' ? adminSelectedTeam : currentUser.teamName;
     const hasExistingBookingOnSameDate = !!(date && teamToCheck && existingBookings.some((b) => {
       if (b.id === selectedBookingId || b.date !== date) return false;
       if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
@@ -554,7 +573,7 @@ export default function BookingModal({
                 onChange={handlePitchChange}
                 className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2.5 px-3 text-slate-800 font-semibold focus:border-blue-900 focus:outline-none focus:ring-0 transition-colors"
               >
-                {pitches.map((p) => (
+                {pitches.filter(p => (p.id as string) !== '3v3' && !p.name?.toLowerCase().includes('3v3')).map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>

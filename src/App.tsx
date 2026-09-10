@@ -29,11 +29,10 @@ import {
 } from './lib/firestoreSync';
 
 export const PITCH_ORDER: Record<string, number> = {
-  '3v3': 1,
-  '5v5': 2,
-  '7v7': 3,
-  '9v9': 4,
-  '11v11': 5,
+  '5v5': 1,
+  '7v7': 2,
+  '9v9': 3,
+  '11v11': 4,
 };
 
 export function sortPitches(configs: PitchConfig[]): PitchConfig[] {
@@ -47,6 +46,7 @@ import SlotConfigurator from './components/SlotConfigurator';
 import BookingModal from './components/BookingModal';
 import CoachesSetup from './components/CoachesSetup';
 import LoginModal from './components/LoginModal';
+import { isU14GirlsTeam, parseTimeToMinutes, check5v5And11v11U14GirlsConflict } from './utils/bookingUtils';
 
 export default function App() {
   // Load initial state from LocalStorage or mock data
@@ -62,7 +62,14 @@ export default function App() {
   const [faFixtures, setFaFixtures] = useState<FAFixture[]>(() => {
     const saved = localStorage.getItem('scotter_jfc_fa_fixtures');
     if (saved) {
-      return JSON.parse(saved);
+      try {
+        const parsed: FAFixture[] = JSON.parse(saved);
+        if (parsed.length > 0) {
+          return parsed;
+        }
+      } catch (err) {
+        console.warn('Error parsing cached fa fixtures:', err);
+      }
     }
     return MOCK_FA_FULLTIME_FIXTURES;
   });
@@ -71,32 +78,196 @@ export default function App() {
     localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(faFixtures));
   }, [faFixtures]);
 
+  // Ensure legacy 3v3 migrated to 5v5, heal team classifications, and ensure non-overlapping kick-off times
+  useEffect(() => {
+    const teamPitchMap = Object.fromEntries(SCOTTER_TEAMS.map(t => [t.name, t.pitchSize]));
+    const standardEarlySlots: Record<string, string[]> = {
+      '5v5': ['09:45', '10:45', '11:45', '12:45', '13:45'],
+      '7v7': ['09:30', '10:45', '12:00', '13:30', '14:45'],
+      '9v9': ['09:30', '11:00', '12:30', '14:00'],
+      '11v11': ['10:00', '12:00', '14:00'],
+    };
+
+    let currentFa = [...faFixtures];
+    let faChanged = false;
+
+    // 1. Map pitch formats correctly
+    currentFa = currentFa.map(f => {
+      const canonicalPitch = teamPitchMap[f.scotterTeam] || ((f.pitchId as string) === '3v3' ? '5v5' : f.pitchId);
+      if (f.pitchId !== canonicalPitch) {
+        faChanged = true;
+        return { ...f, pitchId: canonicalPitch };
+      }
+      return f;
+    });
+
+    // 2. Ensure any fixture with 'Saints' in its homeTeam/awayTeam/competition is mapped to Saints, never Juniors
+    currentFa = currentFa.map(f => {
+      const matchContext = `${f.homeTeam} ${f.awayTeam} ${f.competition}`.toLowerCase();
+      if (/\bsaints?\b/i.test(matchContext) && f.scotterTeam.toLowerCase().includes('juniors')) {
+        const correctedTeam = f.scotterTeam.replace(/juniors?/gi, 'Saints');
+        faChanged = true;
+        return { ...f, scotterTeam: correctedTeam };
+      }
+      return f;
+    });
+
+    // 3. Resolve any clashing kick-off times on the same date and pitch format (ignoring loaded-in conflicting times)
+    const faDates = Array.from(new Set(currentFa.map(f => f.date))).sort();
+    faDates.forEach(date => {
+      (['5v5', '7v7', '9v9', '11v11'] as PitchSize[]).forEach(pid => {
+        const matchingFixes = currentFa.filter(f => f.date === date && f.pitchId === pid && (f.homeTeam.toLowerCase().includes('scotter') || f.scotterTeam.toLowerCase().includes('scotter')));
+        if (matchingFixes.length > 1) {
+          const usedSlots = new Set<string>();
+          let hasClash = false;
+          matchingFixes.forEach(f => {
+            if (usedSlots.has(f.timeSlot) || !f.timeSlot) hasClash = true;
+            usedSlots.add(f.timeSlot);
+          });
+          if (hasClash) {
+            const slots = standardEarlySlots[pid] || ['09:30', '11:00'];
+            matchingFixes.forEach((f, idx) => {
+              const targetSlot = slots[idx] || slots[slots.length - 1];
+              if (f.timeSlot !== targetSlot) {
+                currentFa = currentFa.map(item => item.id === f.id ? { ...item, timeSlot: targetSlot } : item);
+                faChanged = true;
+              }
+            });
+          }
+        }
+      });
+
+      // 4. Ensure 5v5 and U14 Girls 11v11 never overlap
+      const u14GirlsFixes = currentFa.filter(f => f.date === date && f.pitchId === '11v11' && isU14GirlsTeam(f.scotterTeam || f.homeTeam));
+      const fiveFixes = currentFa.filter(f => f.date === date && f.pitchId === '5v5');
+      if (u14GirlsFixes.length > 0 && fiveFixes.length > 0) {
+        u14GirlsFixes.forEach(u14f => {
+          const u14Start = parseTimeToMinutes(u14f.timeSlot);
+          const u14End = u14Start + 120;
+          const clashes = fiveFixes.some(f5 => {
+            const f5Start = parseTimeToMinutes(f5.timeSlot);
+            const f5End = f5Start + 60;
+            return u14Start < f5End && f5Start < u14End;
+          });
+          if (clashes || u14f.timeSlot === '10:00') {
+            const targetSlot = '14:00';
+            if (u14f.timeSlot !== targetSlot) {
+              currentFa = currentFa.map(item => item.id === u14f.id ? { ...item, timeSlot: targetSlot } : item);
+              faChanged = true;
+            }
+          }
+        });
+      }
+    });
+
+    if (faChanged) {
+      setFaFixtures(currentFa);
+      localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(currentFa));
+      syncFaFixturesListToFirestore(currentFa).catch(console.error);
+    }
+
+    let currentBookings = [...bookings];
+    let bookingsChanged = false;
+
+    // 1. Map pitch formats correctly
+    currentBookings = currentBookings.map(b => {
+      const canonicalPitch = teamPitchMap[b.teamName] || ((b.pitchId as string) === '3v3' ? '5v5' : b.pitchId);
+      if (b.pitchId !== canonicalPitch) {
+        bookingsChanged = true;
+        return { ...b, pitchId: canonicalPitch };
+      }
+      return b;
+    });
+
+    // 3. Ensure any booking with 'Saints' in its title/opponent/notes is mapped to Saints, never Juniors
+    currentBookings = currentBookings.map(b => {
+      const matchContext = `${b.title || ''} ${b.opponent || ''} ${b.notes || ''}`.toLowerCase();
+      if (/\bsaints?\b/i.test(matchContext) && b.teamName.toLowerCase().includes('juniors')) {
+        const correctedTeam = b.teamName.replace(/juniors?/gi, 'Saints');
+        bookingsChanged = true;
+        return { ...b, teamName: correctedTeam };
+      }
+      return b;
+    });
+
+    // 4. Resolve any clashing kick-off times on the same date and pitch format (ignoring loaded-in conflicting times)
+    const bookingDates = Array.from(new Set(currentBookings.map(b => b.date))).sort();
+    bookingDates.forEach(date => {
+      (['5v5', '7v7', '9v9', '11v11'] as PitchSize[]).forEach(pid => {
+        const pitchBookings = currentBookings.filter(b => b.date === date && b.pitchId === pid && b.status !== BookingStatus.DECLINED && b.status !== BookingStatus.UNBOOKED);
+        if (pitchBookings.length > 1) {
+          const usedSlots = new Set<string>();
+          let hasClash = false;
+          pitchBookings.forEach(b => {
+            if (usedSlots.has(b.timeSlot) || !b.timeSlot) hasClash = true;
+            usedSlots.add(b.timeSlot);
+          });
+          if (hasClash) {
+            const slots = standardEarlySlots[pid] || ['09:30', '11:00'];
+            pitchBookings.forEach((b, idx) => {
+              const targetSlot = slots[idx] || slots[slots.length - 1];
+              if (b.timeSlot !== targetSlot) {
+                currentBookings = currentBookings.map(item => item.id === b.id ? { ...item, timeSlot: targetSlot } : item);
+                bookingsChanged = true;
+              }
+            });
+          }
+        }
+      });
+
+      // 5. Ensure 5v5 and U14 Girls 11v11 never overlap
+      const u14GirlsBookings = currentBookings.filter(b => b.date === date && b.pitchId === '11v11' && isU14GirlsTeam(b.teamName) && b.status !== BookingStatus.DECLINED && b.status !== BookingStatus.UNBOOKED);
+      const fiveVFiveBookings = currentBookings.filter(b => b.date === date && b.pitchId === '5v5' && b.status !== BookingStatus.DECLINED && b.status !== BookingStatus.UNBOOKED);
+      if (u14GirlsBookings.length > 0 && fiveVFiveBookings.length > 0) {
+        u14GirlsBookings.forEach(u14b => {
+          const u14Start = parseTimeToMinutes(u14b.timeSlot);
+          const u14End = u14Start + 120;
+          const clashes = fiveVFiveBookings.some(f5 => {
+            const f5Start = parseTimeToMinutes(f5.timeSlot);
+            const f5End = f5Start + 60;
+            return u14Start < f5End && f5Start < u14End;
+          });
+          if (clashes || u14b.timeSlot === '10:00') {
+            const targetSlot = '14:00';
+            if (u14b.timeSlot !== targetSlot) {
+              currentBookings = currentBookings.map(item => item.id === u14b.id ? { ...item, timeSlot: targetSlot } : item);
+              bookingsChanged = true;
+            }
+          }
+        });
+      }
+    });
+
+    if (bookingsChanged) {
+      setBookings(currentBookings);
+      localStorage.setItem('scotter_jfc_bookings', JSON.stringify(currentBookings));
+      syncBookingsListToFirestore(currentBookings).catch(console.error);
+    }
+  }, []);
+
   const [pitchConfigs, setPitchConfigs] = useState<PitchConfig[]>(() => {
     const saved = localStorage.getItem('scotter_jfc_pitch_configs');
     let configs: PitchConfig[] = saved ? JSON.parse(saved) : DEFAULT_PITCH_CONFIGS;
+    // Strictly filter out 3v3 pitch
+    configs = configs.filter(c => (c.id as string) !== '3v3');
     // Upgrade existing stored configs to new slots automatically
     configs = configs.map(cfg => {
-      if (cfg.id === '11v11' && (cfg.defaultSlots.includes('09:30') || cfg.defaultSlots.length === 3)) {
-        return { ...cfg, defaultSlots: ['10:00', '12:00', '14:00', '16:00'] };
+      if (cfg.id === '11v11') {
+        const slots = Array.from(new Set([...cfg.defaultSlots.filter(s => s !== '16:00'), '10:00', '12:00', '14:00'])).sort();
+        return { ...cfg, defaultSlots: slots };
       }
       if (cfg.id === '9v9' && (cfg.defaultSlots.includes('10:45') || cfg.defaultSlots.includes('12:00'))) {
-        return { ...cfg, defaultSlots: ['09:30', '11:00', '12:30'] };
+        return { ...cfg, defaultSlots: ['09:30', '11:00', '12:30', '14:00'] };
       }
-      if (cfg.id === '5v5' && (cfg.defaultSlots.includes('09:30') || cfg.defaultSlots.includes('12:00'))) {
-        return { ...cfg, defaultSlots: ['09:45', '10:45', '11:45'] };
+      if (cfg.id === '5v5') {
+        const slots = Array.from(new Set([...cfg.defaultSlots.filter(s => s !== '09:30' && s !== '12:00'), '09:45', '10:45', '11:45', '12:45', '13:45'])).sort();
+        return { ...cfg, defaultSlots: slots };
       }
-      if (cfg.id === '7v7' && cfg.defaultSlots.length === 3) {
-        return { ...cfg, defaultSlots: ['09:30', '10:45', '12:00', '13:15'] };
+      if (cfg.id === '7v7' && (!cfg.defaultSlots.includes('13:30') || cfg.defaultSlots.includes('13:15'))) {
+        return { ...cfg, defaultSlots: ['09:30', '10:45', '12:00', '13:30', '14:45'] };
       }
       return cfg;
     });
-    // Ensure 3v3 is present
-    if (!configs.some(c => c.id === '3v3')) {
-      const default3v3 = DEFAULT_PITCH_CONFIGS.find(c => c.id === '3v3');
-      if (default3v3) {
-        configs.unshift(default3v3);
-      }
-    }
     return sortPitches(configs);
   });
 
@@ -134,10 +305,8 @@ export default function App() {
 
   const [teams, setTeams] = useState<ClubTeam[]>(() => {
     const saved = localStorage.getItem('scotter_jfc_teams');
-    if (saved) {
-      return JSON.parse(saved);
-    }
-    return SCOTTER_TEAMS;
+    const loaded: ClubTeam[] = saved ? JSON.parse(saved) : SCOTTER_TEAMS;
+    return loaded.map(t => ((t.pitchSize as string) === '3v3' ? { ...t, pitchSize: '5v5' as PitchSize } : t));
   });
 
   useEffect(() => {
@@ -232,12 +401,21 @@ export default function App() {
       },
       onFaFixturesUpdate: (fetchedFixtures) => {
         if (fetchedFixtures) {
-          setFaFixtures(fetchedFixtures);
+          setFaFixtures(fetchedFixtures.length > 0 ? fetchedFixtures : MOCK_FA_FULLTIME_FIXTURES);
         }
       },
       onPitchConfigsUpdate: (fetchedConfigs) => {
         if (fetchedConfigs) {
-          setPitchConfigs(sortPitches(fetchedConfigs));
+          const sanitized = fetchedConfigs
+            .filter((c) => (c.id as string) !== '3v3')
+            .map((c) => {
+              if (c.id === '11v11') {
+                const slots = Array.from(new Set([...c.defaultSlots.filter((s) => s !== '16:00'), '10:00', '12:00', '14:00'])).sort();
+                return { ...c, defaultSlots: slots };
+              }
+              return c;
+            });
+          setPitchConfigs(sortPitches(sanitized));
         }
       },
       onSlotChangeRequestsUpdate: (fetchedRequests) => {
@@ -296,8 +474,7 @@ export default function App() {
       const newCategory = t.category.replace(/U\d+/i, `U${nextAge}`).replace(/Under\s*\d+/i, `U${nextAge}`);
 
       let newPitchSize: PitchSize = t.pitchSize;
-      if (nextAge <= 7) newPitchSize = '3v3';
-      else if (nextAge <= 9) newPitchSize = '5v5';
+      if (nextAge <= 9) newPitchSize = '5v5';
       else if (nextAge <= 11) newPitchSize = '7v7';
       else if (nextAge <= 13) newPitchSize = '9v9';
       else newPitchSize = '11v11';
@@ -972,11 +1149,10 @@ export default function App() {
                 <span>Youth Guidelines (2026-27 FA Guidelines)</span>
               </h4>
               <ul className="text-xs text-slate-500 space-y-1 list-disc list-inside font-medium">
-                <li>3v3 format is for U7s fun-football sessions.</li>
-                <li>5v5 format is reserved for U8s and U9s teams.</li>
-                <li>7v7 format accommodates U10s and U11s leagues.</li>
+                <li>5v5 format accommodates U7s, U8s and U9s fixtures.</li>
+                <li>7v7 format accommodates U10s and U11s leagues (with 13:30 Saturday 4th slot reserved for overflow).</li>
                 <li>9v9 pitch hosts U12s and U13s fixtures.</li>
-                <li>11v11 Main Pitch is shared by U14s to Adult squads.</li>
+                <li>11v11 Main Pitch is shared by U14s to Adult squads (5v5 pitch cannot be used when U14 Girls play).</li>
               </ul>
             </div>
           </div>

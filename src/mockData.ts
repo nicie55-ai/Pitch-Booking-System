@@ -167,22 +167,16 @@ const RAW_MOCK_USERS: User[] = [
 
 export const DEFAULT_PITCH_CONFIGS: PitchConfig[] = [
   {
-    id: '3v3',
-    name: '3v3',
-    description: 'Mini pitch for Under 7s fun-football sessions (2026-27 FA guidelines).',
-    defaultSlots: ['09:30', '10:45', '12:00', '13:15'],
-  },
-  {
     id: '5v5',
     name: '5v5',
-    description: 'Designed for Under 8s and Under 9s matches (2026-27 FA guidelines).',
-    defaultSlots: ['09:45', '10:45', '11:45'],
+    description: 'Designed for Under 7s, Under 8s, and Under 9s matches (2026-27 FA guidelines).',
+    defaultSlots: ['09:45', '10:45', '11:45', '12:45', '13:45'],
   },
   {
     id: '7v7',
     name: '7v7',
     description: 'Designed for Under 10s and Under 11s age groups (2026-27 FA guidelines).',
-    defaultSlots: ['09:30', '10:45', '12:00', '13:15'],
+    defaultSlots: ['09:30', '10:45', '12:00', '13:30'],
   },
   {
     id: '9v9',
@@ -194,53 +188,52 @@ export const DEFAULT_PITCH_CONFIGS: PitchConfig[] = [
     id: '11v11',
     name: '11v11',
     description: 'Full-size pitch for Under 14s to Adults.',
-    defaultSlots: ['10:00', '12:00', '14:00', '16:00'],
+    defaultSlots: ['10:00', '12:00', '14:00'],
   },
 ];
 
-// Helper to get formatted dates relative to June 25th, 2026 (Thursday)
-// Saturday June 27, 2026 & Sunday June 28, 2026
+// Initial bookings set prior to 12 September 2026 (5th and 6th September 2026)
 const RAW_INITIAL_BOOKINGS: Booking[] = [
   {
     id: 'b-1',
     pitchId: '7v7',
-    date: '2026-06-27',
+    date: '2026-09-05',
     timeSlot: '09:30',
     teamName: 'Scotter United U9s',
     managerName: 'Paul Scholes',
     managerId: 'manager-u9',
     notes: 'League fixture vs Messingham JFC. Ref has been confirmed.',
     status: BookingStatus.APPROVED,
-    createdAt: '2026-06-24T10:00:00Z',
+    createdAt: '2026-09-01T10:00:00Z',
   },
   {
     id: 'b-2',
     pitchId: '9v9',
-    date: '2026-06-27',
+    date: '2026-09-05',
     timeSlot: '10:45',
     teamName: 'Scotter United U11s',
     managerName: 'Steven Gerrard',
     managerId: 'manager-u11',
     notes: 'County Cup Quarter Final. Expecting higher attendance, extra pitch lines marked if possible.',
     status: BookingStatus.PENDING,
-    createdAt: '2026-06-25T08:30:00Z',
+    createdAt: '2026-09-02T08:30:00Z',
   },
   {
     id: 'b-3',
     pitchId: '11v11',
-    date: '2026-06-28',
+    date: '2026-09-06',
     timeSlot: '12:00',
     teamName: 'Scotter United U15s',
     managerName: 'Wayne Rooney',
     managerId: 'manager-u15',
     notes: 'Pre-season friendly against Gainsborough Trinity. Nets are required.',
     status: BookingStatus.APPROVED,
-    createdAt: '2026-06-23T14:15:00Z',
+    createdAt: '2026-09-01T14:15:00Z',
   },
   {
     id: 'b-4',
     pitchId: '5v5',
-    date: '2026-06-27',
+    date: '2026-09-05',
     timeSlot: '09:30',
     teamName: 'Scotter United U7 Juniors',
     managerName: 'David Beckham',
@@ -248,7 +241,7 @@ const RAW_INITIAL_BOOKINGS: Booking[] = [
     notes: 'Early training friendly tournament with visiting club.',
     status: BookingStatus.DECLINED,
     declineReason: 'Pitch is reserved for Under 8s development league matches this morning.',
-    createdAt: '2026-06-25T09:15:00Z',
+    createdAt: '2026-09-02T09:15:00Z',
   },
 ];
 
@@ -268,9 +261,9 @@ const RAW_INITIAL_SLOT_CHANGES: SlotChangeRequest[] = [
 ];
 
 const RAW_SCOTTER_TEAMS: Omit<ClubTeam, 'id'>[] = [
-  // U7s - 3v3
-  { name: 'Scotter United U7 Juniors', category: 'U7s', pitchSize: '3v3' },
-  { name: 'Scotter United U7 Saints', category: 'U7s', pitchSize: '3v3' },
+  // U7s - planned on 5v5 (or 7v7 / 9v9)
+  { name: 'Scotter United U7 Juniors', category: 'U7s', pitchSize: '5v5' },
+  { name: 'Scotter United U7 Saints', category: 'U7s', pitchSize: '5v5' },
   // U8s - 5v5
   { name: 'Scotter United U8 Juniors', category: 'U8s', pitchSize: '5v5' },
   { name: 'Scotter United U8 Saints', category: 'U8s', pitchSize: '5v5' },
@@ -300,30 +293,13 @@ const RAW_SCOTTER_TEAMS: Omit<ClubTeam, 'id'>[] = [
   { name: 'Scotter United Vets', category: 'Vets', pitchSize: '11v11' },
 ];
 
-// Calculate day shift to align 2026-06-27 to the Saturday of the current week
-const getDayShift = (): number => {
-  const targetDate = new Date('2026-06-27');
-  
-  // Find Saturday of the current week
-  const today = new Date();
-  const currentDay = today.getDay(); // 0 is Sunday, 6 is Saturday
-  const diffToSaturday = 6 - currentDay; // Days to add to reach Saturday
-  const saturdayOfCurrentWeek = new Date(today);
-  saturdayOfCurrentWeek.setDate(today.getDate() + diffToSaturday);
-  
-  // Difference in milliseconds
-  const diffTime = saturdayOfCurrentWeek.getTime() - targetDate.getTime();
-  // Difference in days, rounded
-  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-  return diffDays;
-};
-
 export const shiftDateString = (dateStr: string): string => {
   if (!dateStr) return dateStr;
-  const shift = getDayShift();
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + shift);
-  return d.toISOString().split('T')[0];
+  // All initial fixtures/bookings must be prior to 12 September 2026
+  if (dateStr >= '2026-09-12') {
+    return '2026-09-05';
+  }
+  return dateStr;
 };
 
 export const MOCK_USERS: User[] = RAW_MOCK_USERS.map(u => ({
