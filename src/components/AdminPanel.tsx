@@ -1021,7 +1021,7 @@ export default function AdminPanel({
       const config = pitchConfigs.find((p) => p.id === pitchId);
       if (config && config.defaultSlots && config.defaultSlots.length > 0) {
         if (pitchId === '11v11') {
-          return Array.from(new Set([...config.defaultSlots.filter((s) => s !== '16:00'), '10:00', '11:00', '12:00', '14:00']))
+          return Array.from(new Set([...config.defaultSlots.filter((s) => s !== '16:00' && s !== '11:00'), '10:00', '12:00', '14:00']))
             .sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
         }
         if (pitchId === '5v5') {
@@ -1034,7 +1034,7 @@ export default function AdminPanel({
         '5v5': ['09:45', '10:45', '11:45', '12:45', '13:45'],
         '7v7': ['09:30', '10:45', '12:00', '13:15', '14:45'],
         '9v9': ['09:30', '11:00', '12:30', '14:00'],
-        '11v11': ['10:00', '11:00', '12:00', '14:00'],
+        '11v11': ['10:00', '12:00', '14:00'],
       };
       const slots = fallback[pitchId] || ['09:30', '10:45', '12:00'];
       return slots.sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
@@ -1049,6 +1049,34 @@ export default function AdminPanel({
       if (!teamSlotUsage[team]) teamSlotUsage[team] = {};
       teamSlotUsage[team][slot] = (teamSlotUsage[team][slot] || 0) + 1;
       teamLastSlot[team] = slot;
+    };
+
+    const getSlotFairnessScore = (team: string, slot: string): number => {
+      if (!team) return 0;
+      const count = teamSlotUsage[team]?.[slot] || 0;
+      const isRepeatOfLast = teamLastSlot[team] === slot ? 1 : 0;
+      // Score: lower is better (less frequently played + avoids repeating last week's exact slot)
+      return count * 10 + isRepeatOfLast;
+    };
+
+    const pickBestFairSlot = (team: string, vacantSlots: string[]): string => {
+      if (vacantSlots.length === 0) return '';
+      // Ensure earliest slots on each pitch are utilized first where possible,
+      // while fairness is managed by sortFixturesByFairness determining team priority order.
+      return vacantSlots[0];
+    };
+
+    const sortFixturesByFairness = (fixtureList: FAFixture[], pitchId: PitchSize): FAFixture[] => {
+      const standardSlots = getPitchSlots(pitchId);
+      const earlySlot = standardSlots[0] || '09:30';
+      return [...fixtureList].sort((fA, fB) => {
+        const teamA = fA.scotterTeam || fA.homeTeam;
+        const teamB = fB.scotterTeam || fB.homeTeam;
+        const scoreA = getSlotFairnessScore(teamA, earlySlot);
+        const scoreB = getSlotFairnessScore(teamB, earlySlot);
+        if (scoreA !== scoreB) return scoreA - scoreB;
+        return (fA.id || '').localeCompare(fB.id || '');
+      });
     };
 
     // 1. Seed usage history with existing approved & pending bookings in the Pitch Diary
@@ -1226,10 +1254,11 @@ export default function AdminPanel({
       });
 
       // 2. Process non-3v3 5v5 matches
-      f5v5.forEach((f) => {
+      const sortedF5v5 = sortFixturesByFairness(f5v5, '5v5');
+      sortedF5v5.forEach((f) => {
         const standardSlots = getPitchSlots('5v5');
         const vacant = standardSlots.filter((s) => !checkClash('5v5', s, f.scotterTeam || f.homeTeam, false));
-        const chosenSlot = vacant[0] || standardSlots[0] || '09:45';
+        const chosenSlot = pickBestFairSlot(f.scotterTeam || f.homeTeam, vacant) || standardSlots[0] || '09:45';
 
         recordUsage(f.scotterTeam, chosenSlot);
         assignedOnDate.push({ pitchId: '5v5', slot: chosenSlot, team: f.scotterTeam, is3v3: false });
@@ -1237,13 +1266,42 @@ export default function AdminPanel({
         assignedSlots.set(f.id, chosenSlot);
       });
 
+      // Helper: Check if any 5v5 matches are scheduled on after 10:45 on this date
+      // A match is on after 10:45 if its kickoff is >= 10:45 or its duration extends past 10:45.
+      const has5v5MatchesAfter1045 = (): boolean => {
+        const threshold = parseTimeToMinutes('10:45');
+
+        // Check existing bookings on 5v5 on this date
+        const hasExisting = bookings.some((b) => {
+          if (b.date !== date || b.pitchId !== '5v5') return false;
+          if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
+          const bStart = parseTimeToMinutes(b.timeSlot);
+          const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot, b.teamName));
+          return bStart >= threshold || bEnd > threshold;
+        });
+        if (hasExisting) return true;
+
+        // Check fixtures already assigned to 5v5 on this date in this batch
+        const hasBatch = assignedOnDate.some((a) => {
+          if (a.pitchId !== '5v5') return false;
+          const aStart = parseTimeToMinutes(a.slot);
+          const aEnd = aStart + (a.is3v3 ? 60 : 60);
+          return aStart >= threshold || aEnd > threshold;
+        });
+        return hasBatch;
+      };
+
+      const no5v5After1045 = !has5v5MatchesAfter1045();
+
       // 3. Process U14 Girls on 11v11
       // Constraint: Should not kick off later than 12:00 due to potential morning 3v3 on 5v5.
-      // The 11v11 can also be used for an 11am kick off if the 5v5 allows.
+      // Auto-assign 11:00 if there are no 5v5 matches on after 10:45.
       fU14Girls.forEach((f) => {
-        const candidateSlots = ['11:00', '12:00', '10:00'];
+        const candidateSlots = no5v5After1045
+          ? ['11:00', '12:00', '10:00']
+          : ['12:00', '10:00'];
         const vacant = candidateSlots.filter((s) => !checkClash('11v11', s, f.scotterTeam || f.homeTeam, false));
-        const chosenSlot = vacant[0] || '12:00';
+        const chosenSlot = pickBestFairSlot(f.scotterTeam || f.homeTeam, vacant) || (no5v5After1045 ? '11:00' : '12:00');
 
         recordUsage(f.scotterTeam, chosenSlot);
         assignedOnDate.push({ pitchId: '11v11', slot: chosenSlot, team: f.scotterTeam, is3v3: false });
@@ -1251,11 +1309,12 @@ export default function AdminPanel({
         assignedSlots.set(f.id, chosenSlot);
       });
 
-      // 4. Process regular 7v7 matches
-      f7v7.forEach((f) => {
+      // 4. Process regular 7v7 matches with balanced alternating kick-off times
+      const sortedF7v7 = sortFixturesByFairness(f7v7, '7v7');
+      sortedF7v7.forEach((f) => {
         const standardSlots = getPitchSlots('7v7');
         const vacant = standardSlots.filter((s) => !checkClash('7v7', s, f.scotterTeam || f.homeTeam, false));
-        const chosenSlot = vacant[0] || standardSlots[0] || '09:30';
+        const chosenSlot = pickBestFairSlot(f.scotterTeam || f.homeTeam, vacant) || standardSlots[0] || '09:30';
 
         recordUsage(f.scotterTeam, chosenSlot);
         assignedOnDate.push({ pitchId: '7v7', slot: chosenSlot, team: f.scotterTeam, is3v3: false });
@@ -1264,10 +1323,11 @@ export default function AdminPanel({
       });
 
       // 5. Process regular 9v9 matches
-      f9v9.forEach((f) => {
+      const sortedF9v9 = sortFixturesByFairness(f9v9, '9v9');
+      sortedF9v9.forEach((f) => {
         const standardSlots = getPitchSlots('9v9');
         const vacant = standardSlots.filter((s) => !checkClash('9v9', s, f.scotterTeam || f.homeTeam, false));
-        const chosenSlot = vacant[0] || standardSlots[0] || '09:30';
+        const chosenSlot = pickBestFairSlot(f.scotterTeam || f.homeTeam, vacant) || standardSlots[0] || '09:30';
 
         recordUsage(f.scotterTeam, chosenSlot);
         assignedOnDate.push({ pitchId: '9v9', slot: chosenSlot, team: f.scotterTeam, is3v3: false });
@@ -1276,10 +1336,16 @@ export default function AdminPanel({
       });
 
       // 6. Process other 11v11 matches
-      fOther11v11.forEach((f) => {
+      // Remove 11am kick off slot from regular view, but enable it to be booked if fixture parser is used
+      // and auto-assign 11:00 if there are no 5v5 matches on after 10:45.
+      const sortedF11v11 = sortFixturesByFairness(fOther11v11, '11v11');
+      sortedF11v11.forEach((f) => {
         const standardSlots = getPitchSlots('11v11');
-        const vacant = standardSlots.filter((s) => !checkClash('11v11', s, f.scotterTeam || f.homeTeam, false));
-        const chosenSlot = vacant[0] || (standardSlots.includes('14:00') ? '14:00' : standardSlots[0] || '14:00');
+        const candidateSlots = no5v5After1045
+          ? ['11:00', ...standardSlots]
+          : standardSlots;
+        const vacant = candidateSlots.filter((s) => !checkClash('11v11', s, f.scotterTeam || f.homeTeam, false));
+        const chosenSlot = pickBestFairSlot(f.scotterTeam || f.homeTeam, vacant) || (standardSlots.includes('14:00') ? '14:00' : standardSlots[0] || '14:00');
 
         recordUsage(f.scotterTeam, chosenSlot);
         assignedOnDate.push({ pitchId: '11v11', slot: chosenSlot, team: f.scotterTeam, is3v3: false });

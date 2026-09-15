@@ -97,7 +97,7 @@ export default function App() {
       '5v5': ['09:45', '10:45', '11:45', '12:45', '13:45'],
       '7v7': ['09:30', '10:45', '12:00', '13:15', '14:45'],
       '9v9': ['09:30', '11:00', '12:30', '14:00'],
-      '11v11': ['10:00', '11:00', '12:00', '14:00'],
+      '11v11': ['10:00', '12:00', '14:00'],
     };
 
     let currentFa = [...faFixtures];
@@ -273,7 +273,7 @@ export default function App() {
     // Upgrade existing stored configs to new slots automatically
     configs = configs.map(cfg => {
       if (cfg.id === '11v11') {
-        const slots = Array.from(new Set([...cfg.defaultSlots.filter(s => s !== '16:00'), '10:00', '11:00', '12:00', '14:00'])).sort();
+        const slots = Array.from(new Set([...cfg.defaultSlots.filter(s => s !== '16:00' && s !== '11:00'), '10:00', '12:00', '14:00'])).sort();
         return { ...cfg, defaultSlots: slots };
       }
       if (cfg.id === '9v9' && (cfg.defaultSlots.includes('10:45') || cfg.defaultSlots.includes('12:00'))) {
@@ -331,6 +331,11 @@ export default function App() {
       let updated = t;
       if (updated.name === 'U14s' || updated.name === 'Scotter United U14s') {
         updated = { ...updated, name: 'U14 Juniors' };
+      }
+      if (updated.name === 'Scotter United U9 Juniors' || updated.name === 'U9 Juniors') {
+        if (updated.pitchSize === '5v5') {
+          updated = { ...updated, pitchSize: '7v7' as PitchSize };
+        }
       }
       return ((updated.pitchSize as string) === '3v3' ? { ...updated, pitchSize: '5v5' as PitchSize } : updated);
     });
@@ -440,16 +445,24 @@ export default function App() {
       },
       onPitchConfigsUpdate: (fetchedConfigs) => {
         if (fetchedConfigs) {
+          let wasModified = false;
           const sanitized = fetchedConfigs
             .filter((c) => (c.id as string) !== '3v3')
             .map((c) => {
               if (c.id === '11v11') {
-                const slots = Array.from(new Set([...c.defaultSlots.filter((s) => s !== '16:00'), '10:00', '11:00', '12:00', '14:00'])).sort();
+                if (c.defaultSlots.includes('11:00') || c.defaultSlots.includes('16:00')) {
+                  wasModified = true;
+                }
+                const slots = Array.from(new Set([...c.defaultSlots.filter((s) => s !== '16:00' && s !== '11:00'), '10:00', '12:00', '14:00'])).sort();
                 return { ...c, defaultSlots: slots };
               }
               return c;
             });
           setPitchConfigs(sortPitches(sanitized));
+          if (wasModified) {
+            localStorage.setItem('scotter_jfc_pitch_configs', JSON.stringify(sanitized));
+            savePitchConfigsListToFirestore(sanitized).catch(console.error);
+          }
         }
       },
       onSlotChangeRequestsUpdate: (fetchedRequests) => {

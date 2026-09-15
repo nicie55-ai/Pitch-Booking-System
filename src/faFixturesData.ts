@@ -54,8 +54,8 @@ export const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
   {
     id: 'fa-ps-0829-5',
     date: '2026-08-29',
-    timeSlot: '13:45',
-    pitchId: '5v5',
+    timeSlot: '10:45',
+    pitchId: '7v7',
     homeTeam: 'Scotter United U9 Juniors',
     awayTeam: 'Bottesford Town U9s',
     competition: 'Pre-Season Friendly',

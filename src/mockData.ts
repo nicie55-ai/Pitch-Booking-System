@@ -188,7 +188,7 @@ export const DEFAULT_PITCH_CONFIGS: PitchConfig[] = [
     id: '11v11',
     name: '11v11',
     description: 'Full-size pitch for Under 14s to Adults.',
-    defaultSlots: ['10:00', '11:00', '12:00', '14:00'],
+    defaultSlots: ['10:00', '12:00', '14:00'],
   },
 ];
 
@@ -267,8 +267,8 @@ const RAW_SCOTTER_TEAMS: Omit<ClubTeam, 'id'>[] = [
   // U8s - 5v5
   { name: 'Scotter United U8 Juniors', category: 'U8s', pitchSize: '5v5' },
   { name: 'Scotter United U8 Saints', category: 'U8s', pitchSize: '5v5' },
-  // U9s - 5v5
-  { name: 'Scotter United U9 Juniors', category: 'U9s', pitchSize: '5v5' },
+  // U9s - 7v7 & 5v5
+  { name: 'Scotter United U9 Juniors', category: 'U9s', pitchSize: '7v7' },
   { name: 'Scotter United U9 Saints', category: 'U9s', pitchSize: '5v5' },
   // U10s - 7v7
   { name: 'Scotter United U10 Juniors', category: 'U10s', pitchSize: '7v7' },

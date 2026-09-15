@@ -183,11 +183,14 @@ export default function BookingModal({
     const day = d.getDay();
     const isWeekend = day === 0 || day === 6;
     
-    const pitchSlots = pitches.find((p) => p.id === pitchId)?.defaultSlots || [];
+    let pitchSlots = pitches.find((p) => p.id === pitchId)?.defaultSlots || [];
+    if (pitchId === '11v11') {
+      pitchSlots = pitchSlots.filter((s) => s !== '11:00');
+    }
     let baseSlots: string[] = [];
     if (isWeekend) {
       if (pitchId === '11v11') {
-        baseSlots = ['10:00', '11:00', '12:00', '14:00'];
+        baseSlots = ['10:00', '12:00', '14:00'];
       } else {
         baseSlots = ['09:30', '10:45', '12:00'];
       }
@@ -263,7 +266,7 @@ export default function BookingModal({
       let baseSlots: string[] = [];
       if (isWeekend) {
         if (selected === '11v11') {
-          baseSlots = ['10:00', '11:00', '12:00', '14:00'];
+          baseSlots = ['10:00', '12:00', '14:00'];
         } else if (selected === '9v9') {
           baseSlots = ['09:30', '11:00', '12:30'];
         } else if (selected === '7v7') {

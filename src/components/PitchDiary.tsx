@@ -421,11 +421,17 @@ export default function PitchDiary({
     const isWeekend = day === 0 || day === 6;
     if (isWeekend) {
       const config = pitchConfigs.find(p => p.id === pitchId);
-      const configuredSlots = config?.defaultSlots || [];
+      let configuredSlots = config?.defaultSlots || [];
+      if (pitchId === '11v11') {
+        configuredSlots = configuredSlots.filter(s => s !== '11:00');
+      }
       const fallbackBlocks = WEEKEND_PREBOOKED_BLOCKS[pitchId] || [];
 
       // Combine configured slot times and fallback blocks so all default and custom slots are visible
-      const allStarts = Array.from(new Set([...configuredSlots, ...fallbackBlocks.map(b => b.start)])).sort();
+      let allStarts = Array.from(new Set([...configuredSlots, ...fallbackBlocks.map(b => b.start)])).sort();
+      if (pitchId === '11v11') {
+        allStarts = allStarts.filter(s => s !== '11:00');
+      }
       return allStarts.map(start => {
         const existing = fallbackBlocks.find(b => b.start === start);
         return existing || { start, end: getEndTimeForSlot(pitchId as PitchSize, dateStr, start) };
