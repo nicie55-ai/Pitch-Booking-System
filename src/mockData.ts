@@ -11,7 +11,7 @@ export type { FAFixture };
 const RAW_MOCK_USERS: User[] = [
   {
     id: 'admin-scotteradmin',
-    name: 'Scotter Exec Team',
+    name: 'Scotter Admin',
     role: 'ADMIN',
     teamName: undefined,
     password: 'Riversiders19£',
@@ -95,7 +95,7 @@ const RAW_MOCK_USERS: User[] = [
   },
   {
     id: 'admin-adamh',
-    name: 'Scotter Admin',
+    name: 'AdamH',
     role: 'ADMIN',
     teamName: 'U12 Colts',
     password: 'ScotterAH12',

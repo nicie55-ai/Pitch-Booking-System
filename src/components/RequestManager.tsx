@@ -15,6 +15,7 @@ interface RequestManagerProps {
   onApproveBooking: (id: string) => void;
   onDeclineBooking: (id: string, reason: string) => void;
   onCancelBooking: (id: string) => void;
+  onRequestBooking?: (pitchId: PitchSize, slot: string, notes?: string, date?: string, existingBookingId?: string, fixtureId?: string) => void;
 }
 
 export default function RequestManager({
@@ -23,6 +24,7 @@ export default function RequestManager({
   onApproveBooking,
   onDeclineBooking,
   onCancelBooking,
+  onRequestBooking,
 }: RequestManagerProps) {
   const [filterStatus, setFilterStatus] = useState<'ALL' | BookingStatus>('ALL');
   const [filterPitch, setFilterPitch] = useState<'ALL' | PitchSize>('ALL');
@@ -297,6 +299,14 @@ export default function RequestManager({
                     ) : (
                       /* Cancellation / Info */
                       <div className="flex flex-col sm:items-end gap-1 text-xs">
+                        {isDeclined && onRequestBooking && (currentUser.role === 'ADMIN' || b.managerId === currentUser.id) && (
+                          <button
+                            onClick={() => onRequestBooking(b.pitchId, b.timeSlot, b.notes, b.date, b.id)}
+                            className="bg-blue-900 hover:bg-blue-800 text-white text-xs font-extrabold py-2 px-4 rounded-lg shadow-sm transition-colors cursor-pointer mb-1 flex items-center space-x-1.5"
+                          >
+                            <span>Rebook Slot</span>
+                          </button>
+                        )}
                         {(isApproved || isPending) && (currentUser.role === 'ADMIN' || b.managerId === currentUser.id) && (
                           confirmCancelId === b.id ? (
                             <div className="flex items-center space-x-1.5 bg-red-50 border border-red-100 p-1.5 rounded-lg">

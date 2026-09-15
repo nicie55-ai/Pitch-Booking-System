@@ -307,10 +307,10 @@ export default function App() {
       try {
         const parsed: UserType[] = JSON.parse(saved);
         return parsed.map((u) => {
-          if (u.id === 'admin-scotteradmin' || u.name.toLowerCase() === 'scotteradmin' || u.name.toLowerCase() === 'scotter exec team') {
+          if (u.id === 'admin-scotteradmin' || u.name.toLowerCase() === 'scotteradmin' || u.name.toLowerCase() === 'scotter exec team' || u.name.toLowerCase() === 'scotter admin') {
             return {
               ...u,
-              name: 'Scotter Exec Team',
+              name: 'Scotter Admin',
               password: 'Riversiders19£',
               teamName: u.teamName === 'Club Admin' ? undefined : u.teamName,
             };
@@ -318,7 +318,9 @@ export default function App() {
           if (u.id === 'admin-adamh' || u.name.toLowerCase() === 'adamh') {
             return {
               ...u,
-              name: 'Scotter Admin',
+              name: 'AdamH',
+              teamName: 'U12 Colts',
+              password: 'ScotterAH12',
             };
           }
           return u;
@@ -1228,6 +1230,7 @@ export default function App() {
                     onApproveBooking={handleApproveBooking}
                     onDeclineBooking={handleDeclineBooking}
                     onCancelBooking={handleCancelBooking}
+                    onRequestBooking={handleOpenBookingModal}
                   />
                 )}
 

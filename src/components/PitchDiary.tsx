@@ -160,7 +160,7 @@ export default function PitchDiary({
 
   // Find declined bookings for this manager
   const declinedBookings = bookings.filter(
-    (b) => currentUser.role === 'MANAGER' && b.managerId === currentUser.id && b.status === BookingStatus.DECLINED
+    (b) => currentUser.role === 'MANAGER' && canManagerUnbook(currentUser, b) && b.status === BookingStatus.DECLINED
   );
 
   const handlePrevWeek = () => {
@@ -562,7 +562,14 @@ export default function PitchDiary({
                     </div>
                   )}
                 </div>
-                <div className="flex items-center self-start sm:self-center">
+                <div className="flex items-center space-x-2 self-start sm:self-center">
+                  <button
+                    onClick={() => onRequestBooking(b.pitchId, b.timeSlot, b.notes, b.date, b.id)}
+                    className="bg-blue-900 hover:bg-blue-800 text-white text-[11px] font-extrabold py-2 px-4 rounded-lg shadow-sm transition-colors whitespace-nowrap cursor-pointer flex items-center space-x-1"
+                  >
+                    <span>Rebook Slot</span>
+                  </button>
+
                   {confirmDismissId === b.id ? (
                     <div className="flex items-center space-x-2 bg-red-100 border border-red-200 py-1.5 px-3 rounded-lg">
                       <span className="text-xs text-red-800 font-extrabold uppercase">Confirm?</span>
@@ -585,9 +592,10 @@ export default function PitchDiary({
                   ) : (
                     <button
                       onClick={() => setConfirmDismissId(b.id)}
-                      className="bg-red-600 hover:bg-red-700 text-white text-[11px] font-extrabold py-2 px-4 rounded-lg shadow-sm transition-colors whitespace-nowrap"
+                      className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-extrabold py-2 px-3 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                      title="Dismiss notification"
                     >
-                      Acknowledge & Dismiss
+                      Dismiss
                     </button>
                   )}
                 </div>
