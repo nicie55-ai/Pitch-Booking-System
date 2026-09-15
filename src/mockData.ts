@@ -132,7 +132,7 @@ const RAW_MOCK_USERS: User[] = [
     id: 'coach-paulf',
     name: 'PaulF',
     role: 'MANAGER',
-    teamName: 'U14s',
+    teamName: 'U14 Juniors',
     password: 'ScotterPF14',
   },
   {
@@ -176,19 +176,19 @@ export const DEFAULT_PITCH_CONFIGS: PitchConfig[] = [
     id: '7v7',
     name: '7v7',
     description: 'Designed for Under 10s and Under 11s age groups (2026-27 FA guidelines).',
-    defaultSlots: ['09:30', '10:45', '12:00', '13:30'],
+    defaultSlots: ['09:30', '10:45', '12:00', '13:15', '14:45'],
   },
   {
     id: '9v9',
     name: '9v9',
     description: 'Designed for Under 12s and Under 13s age groups (2026-27 FA guidelines).',
-    defaultSlots: ['09:30', '11:00', '12:30'],
+    defaultSlots: ['09:30', '11:00', '12:30', '14:00'],
   },
   {
     id: '11v11',
     name: '11v11',
     description: 'Full-size pitch for Under 14s to Adults.',
-    defaultSlots: ['10:00', '12:00', '14:00'],
+    defaultSlots: ['10:00', '11:00', '12:00', '14:00'],
   },
 ];
 
@@ -285,7 +285,7 @@ const RAW_SCOTTER_TEAMS: Omit<ClubTeam, 'id'>[] = [
   { name: 'Scotter United U13 Juniors', category: 'U13', pitchSize: '9v9' },
   { name: 'Scotter United U13 Saints', category: 'U13', pitchSize: '9v9' },
   // Senior formats - 11v11
-  { name: 'Scotter United U14s', category: 'U14', pitchSize: '11v11' },
+  { name: 'Scotter United U14 Juniors', category: 'U14', pitchSize: '11v11' },
   { name: 'Scotter United U14 Girls', category: 'U14 Girls', pitchSize: '11v11' },
   { name: 'Scotter United U15', category: 'U15', pitchSize: '11v11' },
   { name: 'Scotter United U17', category: 'U17', pitchSize: '11v11' },

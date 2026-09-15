@@ -86,20 +86,10 @@ export function subscribeToFirestoreData(callbacks: {
 
     // 2. Bookings Subscription
     const bookingsRef = collection(db, COLLECTIONS.BOOKINGS);
-    const unsubBookings = onSnapshot(bookingsRef, async (snapshot) => {
+    const unsubBookings = onSnapshot(bookingsRef, (snapshot) => {
       try {
-        const hasBeenInitialized = localStorage.getItem('scotter_jfc_bookings_initialized');
         if (snapshot.empty) {
-          if (!hasBeenInitialized) {
-            localStorage.setItem('scotter_jfc_bookings_initialized', 'true');
-            const batch = writeBatch(db);
-            INITIAL_BOOKINGS.forEach((b) => {
-              batch.set(doc(db, COLLECTIONS.BOOKINGS, b.id), sanitizeData(b));
-            });
-            await batch.commit().catch(() => {});
-          } else {
-            callbacks.onBookingsUpdate([]);
-          }
+          callbacks.onBookingsUpdate([]);
         } else {
           localStorage.setItem('scotter_jfc_bookings_initialized', 'true');
           const bookingsList: Booking[] = snapshot.docs.map((d) => d.data() as Booking);
@@ -113,20 +103,10 @@ export function subscribeToFirestoreData(callbacks: {
 
     // 3. FA Fixtures Subscription
     const faFixturesRef = collection(db, COLLECTIONS.FA_FIXTURES);
-    const unsubFaFixtures = onSnapshot(faFixturesRef, async (snapshot) => {
+    const unsubFaFixtures = onSnapshot(faFixturesRef, (snapshot) => {
       try {
-        const hasBeenInitialized = localStorage.getItem('scotter_jfc_fafixtures_initialized');
         if (snapshot.empty) {
-          if (!hasBeenInitialized) {
-            localStorage.setItem('scotter_jfc_fafixtures_initialized', 'true');
-            const batch = writeBatch(db);
-            MOCK_FA_FULLTIME_FIXTURES.forEach((f) => {
-              batch.set(doc(db, COLLECTIONS.FA_FIXTURES, f.id), sanitizeData(f));
-            });
-            await batch.commit().catch(() => {});
-          } else {
-            callbacks.onFaFixturesUpdate([]);
-          }
+          callbacks.onFaFixturesUpdate([]);
         } else {
           localStorage.setItem('scotter_jfc_fafixtures_initialized', 'true');
           const fixturesList: FAFixture[] = snapshot.docs.map((d) => d.data() as FAFixture);
@@ -345,6 +325,19 @@ export async function deleteBookingFromFirestore(bookingId: string) {
   }
 }
 
+export async function deleteBookingsBulkFromFirestore(bookingIds: string[]) {
+  if (!bookingIds || bookingIds.length === 0) return;
+  try {
+    const batch = writeBatch(db);
+    bookingIds.forEach((id) => {
+      batch.delete(doc(db, COLLECTIONS.BOOKINGS, id));
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed bulk deleting bookings from Firestore:', err);
+  }
+}
+
 export async function syncBookingsListToFirestore(bookings: Booking[]) {
   try {
     const snapshot = await getDocs(collection(db, COLLECTIONS.BOOKINGS));
@@ -393,6 +386,19 @@ export async function deleteFaFixtureFromFirestore(fixtureId: string) {
     await deleteDoc(doc(db, COLLECTIONS.FA_FIXTURES, fixtureId));
   } catch (err) {
     console.warn('Failed deleting FA fixture from Firestore:', err);
+  }
+}
+
+export async function deleteFaFixturesBulkFromFirestore(fixtureIds: string[]) {
+  if (!fixtureIds || fixtureIds.length === 0) return;
+  try {
+    const batch = writeBatch(db);
+    fixtureIds.forEach((id) => {
+      batch.delete(doc(db, COLLECTIONS.FA_FIXTURES, id));
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed bulk deleting FA fixtures from Firestore:', err);
   }
 }
 

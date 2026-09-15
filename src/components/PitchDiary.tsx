@@ -25,9 +25,9 @@ import {
   Archive,
   X
 } from 'lucide-react';
-import { PitchSize, Booking, BookingStatus, PitchConfig, User as UserType } from '../types';
+import { PitchSize, Booking, BookingStatus, PitchConfig, User as UserType, ClubTeam } from '../types';
 import AdminPanel from './AdminPanel';
-import { canManagerUnbook, isTeamMatch, parseDateLocal, formatDateLocal, formatDateUK, check5v5And11v11U14GirlsConflict } from '../utils/bookingUtils';
+import { canManagerUnbook, isTeamMatch, parseDateLocal, formatDateLocal, formatDateUK, check5v5And11v11U14GirlsConflict, is3v3Match } from '../utils/bookingUtils';
 import { MOCK_FA_FULLTIME_FIXTURES, FAFixture } from '../mockData';
 
 interface PitchDiaryProps {
@@ -36,6 +36,7 @@ interface PitchDiaryProps {
   pitchConfigs: PitchConfig[];
   bookings: Booking[];
   currentUser: UserType;
+  teams?: ClubTeam[];
   onRequestBooking: (pitchId: PitchSize, slot: string, notes?: string, date?: string, existingBookingId?: string, fixtureId?: string) => void;
   onApproveBooking: (id: string) => void;
   onDeclineBooking: (id: string, reason: string) => void;
@@ -46,6 +47,8 @@ interface PitchDiaryProps {
   onUpdateUsers?: (newUsers: UserType[]) => void;
   faFixtures: FAFixture[];
   onUpdateFaFixtures: (fixtures: FAFixture[] | ((prev: FAFixture[]) => FAFixture[])) => void;
+  onDeleteFaFixture?: (id: string) => void;
+  onDeleteFaFixturesBulk?: (fixtureIds: string[], bookingIds?: string[]) => void;
   onClearAllBookings?: () => void;
 }
 
@@ -55,6 +58,7 @@ export default function PitchDiary({
   pitchConfigs,
   bookings,
   currentUser,
+  teams,
   onRequestBooking,
   onApproveBooking,
   onDeclineBooking,
@@ -65,6 +69,8 @@ export default function PitchDiary({
   onUpdateUsers,
   faFixtures,
   onUpdateFaFixtures,
+  onDeleteFaFixture,
+  onDeleteFaFixturesBulk,
   onClearAllBookings,
 }: PitchDiaryProps) {
   // Decline active states for specific booking IDs (to show decline text area)
@@ -341,8 +347,15 @@ export default function PitchDiary({
     return ((clamped - START_MINUTES) / TOTAL_MINUTES) * 100;
   };
 
-  const getEndTimeForSlot = (pId: PitchSize, dateStr: string, slot: string): string => {
+  const getEndTimeForSlot = (pId: PitchSize, dateStr: string, slot: string, teamName?: string): string => {
     if (!dateStr || !slot || !slot.includes(':')) return '';
+    if (is3v3Match(teamName, undefined, pId)) {
+      const [hStr, mStr] = slot.split(':');
+      const totalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10) + 60;
+      const h = Math.floor(totalMinutes / 60);
+      const m = totalMinutes % 60;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
     const d = parseDateLocal(dateStr);
     const day = d.getDay();
     const isWeekend = day === 0 || day === 6;
@@ -387,7 +400,8 @@ export default function PitchDiary({
       { start: '09:30', end: '10:45' },
       { start: '10:45', end: '12:00' },
       { start: '12:00', end: '13:15' },
-      { start: '13:30', end: '14:45' },
+      { start: '13:15', end: '14:30' },
+      { start: '14:45', end: '16:00' },
     ],
     '9v9': [
       { start: '09:30', end: '11:00' },
@@ -493,6 +507,7 @@ export default function PitchDiary({
           onCancelBooking={onCancelBooking}
           onUpdateBooking={onUpdateBooking}
           currentUser={currentUser}
+          teams={teams}
           onRequestBooking={onRequestBooking}
           users={users}
           onUpdateUsers={onUpdateUsers}
@@ -799,7 +814,7 @@ export default function PitchDiary({
 
                       {/* 3. Render Active Bookings */}
                       {activeBookings.map((booking) => {
-                        const resolvedEndTime = booking.endTime || getEndTimeForSlot(booking.pitchId, booking.date, booking.timeSlot);
+                        const resolvedEndTime = booking.endTime || getEndTimeForSlot(booking.pitchId, booking.date, booking.timeSlot, booking.teamName);
                         const topPercent = getPositionPercent(booking.timeSlot);
                         const endPercent = getPositionPercent(resolvedEndTime);
                         const heightPercent = endPercent - topPercent;
@@ -1309,8 +1324,9 @@ export default function PitchDiary({
                         // Check for clashes
                         const clashesList: string[] = [];
                         unbookedSelected.forEach((f) => {
+                          const fTeam = f.scotterTeam || f.teamName || f.title;
                           const fStart = parseTimeToMinutes(f.timeSlot);
-                          const fEnd = parseTimeToMinutes(getEndTimeForSlot(f.pitchId, f.date, f.timeSlot));
+                          const fEnd = parseTimeToMinutes(getEndTimeForSlot(f.pitchId, f.date, f.timeSlot, fTeam));
 
                           // Check clash with existing bookings
                           const hasBookingOverlap = bookings.some((b) => {
@@ -1318,11 +1334,11 @@ export default function PitchDiary({
                             if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
 
                             const pitchMatches = b.pitchId === f.pitchId || 
-                              check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.teamName || f.title, b.pitchId, b.teamName);
+                              check5v5And11v11U14GirlsConflict(f.pitchId, fTeam, b.pitchId, b.teamName);
                             if (!pitchMatches) return false;
 
                             const bStart = parseTimeToMinutes(b.timeSlot);
-                            const bEnd = parseTimeToMinutes(b.endTime || getEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+                            const bEnd = parseTimeToMinutes(b.endTime || getEndTimeForSlot(b.pitchId, b.date, b.timeSlot, b.teamName));
 
                             return fStart < bEnd && bStart < fEnd;
                           });
@@ -1332,12 +1348,13 @@ export default function PitchDiary({
                             if (item.id === f.id) return false;
                             if (item.date !== f.date) return false;
 
+                            const itemTeam = item.scotterTeam || item.teamName || item.title;
                             const pitchMatches = item.pitchId === f.pitchId ||
-                              check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.teamName || f.title, item.pitchId, item.scotterTeam || item.teamName || item.title);
+                              check5v5And11v11U14GirlsConflict(f.pitchId, fTeam, item.pitchId, itemTeam);
                             if (!pitchMatches) return false;
 
                             const itemStart = parseTimeToMinutes(item.timeSlot);
-                            const itemEnd = parseTimeToMinutes(getEndTimeForSlot(item.pitchId, item.date, item.timeSlot));
+                            const itemEnd = parseTimeToMinutes(getEndTimeForSlot(item.pitchId, item.date, item.timeSlot, itemTeam));
 
                             return fStart < itemEnd && itemStart < fEnd;
                           });
@@ -1400,19 +1417,20 @@ export default function PitchDiary({
                   const unbookedSelected = selectedItems.filter(item => !item.booking || item.booking.status === BookingStatus.UNBOOKED);
                   const clashesList: string[] = [];
                   unbookedSelected.forEach((f) => {
+                    const fTeam = f.scotterTeam || f.teamName || f.title;
                     const fStart = parseTimeToMinutes(f.timeSlot);
-                    const fEnd = parseTimeToMinutes(getEndTimeForSlot(f.pitchId, f.date, f.timeSlot));
+                    const fEnd = parseTimeToMinutes(getEndTimeForSlot(f.pitchId, f.date, f.timeSlot, fTeam));
 
                     const hasBookingOverlap = bookings.some((b) => {
                       if (b.date !== f.date) return false;
                       if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
 
                       const pitchMatches = b.pitchId === f.pitchId || 
-                        check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.teamName || f.title, b.pitchId, b.teamName);
+                        check5v5And11v11U14GirlsConflict(f.pitchId, fTeam, b.pitchId, b.teamName);
                       if (!pitchMatches) return false;
 
                       const bStart = parseTimeToMinutes(b.timeSlot);
-                      const bEnd = parseTimeToMinutes(b.endTime || getEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+                      const bEnd = parseTimeToMinutes(b.endTime || getEndTimeForSlot(b.pitchId, b.date, b.timeSlot, b.teamName));
 
                       return fStart < bEnd && bStart < fEnd;
                     });
@@ -1421,12 +1439,13 @@ export default function PitchDiary({
                       if (item.id === f.id) return false;
                       if (item.date !== f.date) return false;
 
+                      const itemTeam = item.scotterTeam || item.teamName || item.title;
                       const pitchMatches = item.pitchId === f.pitchId ||
-                        check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.teamName || f.title, item.pitchId, item.scotterTeam || item.teamName || item.title);
+                        check5v5And11v11U14GirlsConflict(f.pitchId, fTeam, item.pitchId, itemTeam);
                       if (!pitchMatches) return false;
 
                       const itemStart = parseTimeToMinutes(item.timeSlot);
-                      const itemEnd = parseTimeToMinutes(getEndTimeForSlot(item.pitchId, item.date, item.timeSlot));
+                      const itemEnd = parseTimeToMinutes(getEndTimeForSlot(item.pitchId, item.date, item.timeSlot, itemTeam));
 
                       return fStart < itemEnd && itemStart < fEnd;
                     });
@@ -1494,21 +1513,22 @@ export default function PitchDiary({
                 <div className="flex items-center gap-2 self-end sm:self-auto">
                   <button
                     onClick={() => {
-                      // 1. Cancel any active bookings for selected items
+                      // 1. Gather any active booking IDs for selected items
                       const itemsToCancel = selectedItems.filter(item => item.booking);
-                      itemsToCancel.forEach(item => {
-                        if (item.booking) {
-                          onCancelBooking(item.booking.id);
-                        }
-                      });
+                      const bookingIds = itemsToCancel.map(item => item.booking!.id);
 
-                      // 2. Remove from faFixtures (using pristine functional callback update for absolute accuracy)
+                      // 2. Gather FA fixture IDs to delete
                       const faFixtureIdsToDelete = selectedItems
                         .filter(item => item.type === 'FA_FIXTURE')
                         .map(item => item.id);
                       
-                      if (faFixtureIdsToDelete.length > 0) {
-                        onUpdateFaFixtures((prevFixtures) => prevFixtures.filter(f => !faFixtureIdsToDelete.includes(f.id)));
+                      if (onDeleteFaFixturesBulk) {
+                        onDeleteFaFixturesBulk(faFixtureIdsToDelete, bookingIds);
+                      } else {
+                        bookingIds.forEach(id => onCancelBooking(id));
+                        if (faFixtureIdsToDelete.length > 0) {
+                          onUpdateFaFixtures((prevFixtures) => prevFixtures.filter(f => !faFixtureIdsToDelete.includes(f.id)));
+                        }
                       }
 
                       setSelectedUnifiedIds([]);
@@ -1687,11 +1707,17 @@ export default function PitchDiary({
                               <span className="text-[10px] font-black text-red-800 uppercase">Are you sure?</span>
                               <button
                                 onClick={() => {
-                                  if (item.booking) {
-                                    onCancelBooking(item.booking.id);
-                                  }
                                   if (item.type === 'FA_FIXTURE') {
-                                    onUpdateFaFixtures((prev) => prev.filter(f => f.id !== item.id));
+                                    if (onDeleteFaFixture) {
+                                      onDeleteFaFixture(item.id);
+                                    } else {
+                                      if (item.booking) {
+                                        onCancelBooking(item.booking.id);
+                                      }
+                                      onUpdateFaFixtures((prev) => prev.filter(f => f.id !== item.id));
+                                    }
+                                  } else if (item.booking) {
+                                    onCancelBooking(item.booking.id);
                                   }
                                   setConfirmDeleteFixtureId(null);
                                 }}

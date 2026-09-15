@@ -37,7 +37,7 @@ import {
 } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, PitchConfig, User, ClubTeam } from '../types';
 import { SCOTTER_TEAMS, MOCK_FA_FULLTIME_FIXTURES, FAFixture } from '../mockData';
-import { canManagerUnbook, isTeamMatch, normalizeTeamName, sortTeamsByAge, sortUsersByTeamAge, parseDateLocal, formatDateLocal, formatDateUK, formatUKDateNumeric, parseUKDateToISO, check5v5And11v11U14GirlsConflict, isU14GirlsTeam } from '../utils/bookingUtils';
+import { canManagerUnbook, isTeamMatch, normalizeTeamName, sortTeamsByAge, sortUsersByTeamAge, parseDateLocal, formatDateLocal, formatDateUK, formatUKDateNumeric, parseUKDateToISO, check5v5And11v11U14GirlsConflict, isU14GirlsTeam, is3v3Match } from '../utils/bookingUtils';
 
 // --- Top-Level Stateless Helpers (Hoisted and safe from Temporal Dead Zone) ---
 
@@ -47,8 +47,18 @@ function parseTimeToMinutes(t: string): number {
   return (h || 0) * 60 + (m || 0);
 }
 
-function getAdminEndTimeForSlot(pId: PitchSize, dateStr: string, slot: string): string {
+function getAdminEndTimeForSlot(pId: PitchSize, dateStr: string, slot: string, teamName?: string): string {
   if (!slot || !dateStr || !slot.includes(':')) return '';
+  if (is3v3Match(teamName, undefined, pId)) {
+    const [hStr, mStr] = slot.split(':');
+    const hNum = parseInt(hStr, 10);
+    const mNum = parseInt(mStr, 10);
+    if (isNaN(hNum) || isNaN(mNum)) return '';
+    const totalMinutes = hNum * 60 + mNum + 60; // 3v3 strictly 1 hour
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
   const d = parseDateLocal(dateStr);
   const day = d.getDay();
   const isWeekend = day === 0 || day === 6;
@@ -273,14 +283,14 @@ function parseFullTimeTabLine(line: string) {
   };
 }
 
-function findBestTeamMatch(pastedName: string, contextLine?: string): string {
-  if (!pastedName || typeof pastedName !== 'string') return SCOTTER_TEAMS[0].name;
+function findBestTeamMatch(pastedName: string, contextLine?: string, availableTeams: ClubTeam[] = SCOTTER_TEAMS): string {
+  if (!pastedName || typeof pastedName !== 'string') return availableTeams[0]?.name || 'Scotter United';
 
   const norm = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
   const normPasted = normalizeTeamName(pastedName);
 
   // 1. Direct exact or normalized canonical match against all Scotter teams
-  for (const team of SCOTTER_TEAMS) {
+  for (const team of availableTeams) {
     if (
       norm(pastedName) === norm(team.name) ||
       norm(pastedName) === norm(`Scotter United ${team.name}`) ||
@@ -316,12 +326,21 @@ function findBestTeamMatch(pastedName: string, contextLine?: string): string {
   const normCleaned = normalizeTeamName(cleaned);
 
   // Direct match after stripping club prefix
-  for (const team of SCOTTER_TEAMS) {
+  for (const team of availableTeams) {
     if (
       norm(cleaned) === norm(team.name) ||
       (normCleaned && normCleaned === normalizeTeamName(team.name))
     ) {
       return team.name;
+    }
+  }
+
+  // 2b. Direct alias: If cleaned / normPasted is "u14" or "u14s", and a team is named "U14 Juniors", match it!
+  const hasSpecificU14s = availableTeams.some(t => t.name.toLowerCase() === 'u14s' || t.name.toLowerCase() === 'u14');
+  if (!hasSpecificU14s) {
+    const u14JuniorsTeam = availableTeams.find(t => t.name.toLowerCase().includes('u14') && t.name.toLowerCase().includes('juniors'));
+    if (u14JuniorsTeam && (norm(cleaned) === 'u14' || norm(cleaned) === 'u14s' || normPasted === 'u14')) {
+      return u14JuniorsTeam.name;
     }
   }
 
@@ -351,7 +370,7 @@ function findBestTeamMatch(pastedName: string, contextLine?: string): string {
   let bestMatch = '';
   let highestScore = -999;
 
-  for (const team of SCOTTER_TEAMS) {
+  for (const team of availableTeams) {
     let score = 0;
     const teamNorm = team.name.toLowerCase();
 
@@ -377,15 +396,18 @@ function findBestTeamMatch(pastedName: string, contextLine?: string): string {
     if (isGirls) {
       if (teamNorm.includes('girls')) score += 50;
       else score -= 30;
+    } else {
+      // Strongly avoid matching girls teams if input did not mention girls
+      if (teamNorm.includes('girls')) score -= 50;
     }
     if (isJuniors) {
       if (teamNorm.includes('juniors')) score += 50;
       else score -= 30;
     }
 
-    // If no specific suffix in input (e.g. "U14" or "U15"), prefer exact base age group (e.g. U14s / U15 / U17 / U18)
+    // If no specific suffix in input (e.g. "U14" or "U15"), prefer exact base age group or standard team (e.g. U14 Juniors / U15 / U17 / U18)
     if (!isSaints && !isColts && !isGirls && !isJuniors) {
-      if (!teamNorm.includes('saints') && !teamNorm.includes('colts') && !teamNorm.includes('girls') && !teamNorm.includes('juniors')) {
+      if (!teamNorm.includes('saints') && !teamNorm.includes('colts') && !teamNorm.includes('girls')) {
         score += 20;
       }
     }
@@ -396,7 +418,7 @@ function findBestTeamMatch(pastedName: string, contextLine?: string): string {
     }
   }
 
-  return highestScore > 0 && bestMatch ? bestMatch : SCOTTER_TEAMS[0].name;
+  return highestScore > 0 && bestMatch ? bestMatch : availableTeams[0]?.name || 'Scotter United';
 }
 
 const ALL_COMMON_SLOTS = [
@@ -421,10 +443,15 @@ function isNameMismatch(fixture: FAFixture) {
 
   const original = norm(isScotterHomeFixture(fixture) ? fixture.homeTeam : fixture.awayTeam);
   const mapped = norm(fixture.scotterTeam);
+
+  // Normalize u14s / u14 with u14juniors
+  if ((original === 'u14' || original === 'u14s') && mapped === 'u14juniors') return false;
+  if ((mapped === 'u14' || mapped === 'u14s') && original === 'u14juniors') return false;
+
   return original !== mapped;
 }
 
-export function isScotterHomeFixture(f: { homeTeam: string; scotterTeam?: string; awayTeam?: string }): boolean {
+export function isScotterHomeFixture(f: { homeTeam: string; scotterTeam?: string; awayTeam?: string }, customTeams: ClubTeam[] = SCOTTER_TEAMS): boolean {
   if (!f) return false;
   const h = (f.homeTeam || '').toLowerCase();
   const s = (f.scotterTeam || '').toLowerCase();
@@ -434,8 +461,8 @@ export function isScotterHomeFixture(f: { homeTeam: string; scotterTeam?: string
   if (a.includes('scotter')) return false;
   if (s.includes('scotter')) return true;
   if (f.homeTeam && f.scotterTeam && f.homeTeam === f.scotterTeam) return true;
-  if (SCOTTER_TEAMS.some((t) => t.name.toLowerCase() === h)) return true;
-  if (SCOTTER_TEAMS.some((t) => t.name.toLowerCase() === s)) {
+  if (customTeams.some((t) => t.name.toLowerCase() === h)) return true;
+  if (customTeams.some((t) => t.name.toLowerCase() === s)) {
     return true;
   }
   return false;
@@ -450,6 +477,7 @@ interface AdminPanelProps {
   onCancelBooking: (id: string) => void;
   onUpdateBooking?: (id: string, fields: Partial<Booking>) => void;
   currentUser: User;
+  teams?: ClubTeam[];
   onRequestBooking?: (pitchId: PitchSize, slot: string, notes?: string, date?: string, existingBookingId?: string, fixtureId?: string) => void;
   users?: User[];
   onUpdateUsers?: (newUsers: User[]) => void;
@@ -467,6 +495,7 @@ export default function AdminPanel({
   onCancelBooking,
   onUpdateBooking,
   currentUser,
+  teams,
   onRequestBooking,
   users = [],
   onUpdateUsers,
@@ -474,6 +503,9 @@ export default function AdminPanel({
   onUpdateFaFixtures,
   onClearAllBookings,
 }: AdminPanelProps) {
+  const availableTeams = teams && teams.length > 0 ? teams : SCOTTER_TEAMS;
+  const matchTeam = (pName: string, cLine?: string) => findBestTeamMatch(pName, cLine, availableTeams);
+  const isHomeFixture = (f: { homeTeam: string; scotterTeam?: string; awayTeam?: string }) => isScotterHomeFixture(f, availableTeams);
   // Extract Home and Away team names from booking notes or fallback to teamName
   const getHomeAndAwayForBooking = (b: Booking): { homeTeam: string; awayTeam: string } => {
     if (!b.notes || !b.notes.trim()) {
@@ -694,7 +726,7 @@ export default function AdminPanel({
   // Automatically adjust pitch size when team is selected
   const handleTeamChange = (teamName: string) => {
     setSelectedTeam(teamName);
-    const team = SCOTTER_TEAMS.find((t) => t.name === teamName);
+    const team = availableTeams.find((t) => t.name === teamName);
     if (team) {
       setPitchSize(team.pitchSize);
       // Pre-select first slot for this pitch size if not set
@@ -717,7 +749,7 @@ export default function AdminPanel({
   }, [pitchSize, blockSlot, pitchConfigs]);
 
   // Group teams by category for UI optgroup selection
-  const teamCategories = Array.from(new Set(SCOTTER_TEAMS.map((t) => t.category)));
+  const teamCategories = Array.from(new Set(availableTeams.map((t) => t.category)));
 
   // Handle single / repeating block booking submission
   const handleBlockBookingSubmit = (e: React.FormEvent) => {
@@ -989,7 +1021,7 @@ export default function AdminPanel({
       const config = pitchConfigs.find((p) => p.id === pitchId);
       if (config && config.defaultSlots && config.defaultSlots.length > 0) {
         if (pitchId === '11v11') {
-          return Array.from(new Set([...config.defaultSlots.filter((s) => s !== '16:00'), '10:00', '12:00', '14:00']))
+          return Array.from(new Set([...config.defaultSlots.filter((s) => s !== '16:00'), '10:00', '11:00', '12:00', '14:00']))
             .sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
         }
         if (pitchId === '5v5') {
@@ -1000,9 +1032,9 @@ export default function AdminPanel({
       }
       const fallback: Partial<Record<PitchSize, string[]>> = {
         '5v5': ['09:45', '10:45', '11:45', '12:45', '13:45'],
-        '7v7': ['09:30', '10:45', '12:00', '13:30', '14:45'],
+        '7v7': ['09:30', '10:45', '12:00', '13:15', '14:45'],
         '9v9': ['09:30', '11:00', '12:30', '14:00'],
-        '11v11': ['10:00', '12:00', '14:00'],
+        '11v11': ['10:00', '11:00', '12:00', '14:00'],
       };
       const slots = fallback[pitchId] || ['09:30', '10:45', '12:00'];
       return slots.sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
@@ -1042,122 +1074,216 @@ export default function AdminPanel({
 
     const sortedDates = Object.keys(datesGroup).sort();
     const assignedSlots = new Map<string, string>();
+    const assignedPitches = new Map<string, PitchSize>();
 
     sortedDates.forEach((date) => {
       const dateFixtures = datesGroup[date];
-      const assignedOnDate: Array<{ pitchId: PitchSize; slot: string; team: string }> = [];
-      const has5v5OnDate = dateFixtures.some(f => f.pitchId === '5v5');
+      const assignedOnDate: Array<{ pitchId: PitchSize; slot: string; team: string; is3v3?: boolean }> = [];
 
-      // Sorting within date:
-      // Under FA guidelines & club rules, 5v5 cannot be scheduled when U14 Girls play on 11v11.
-      // When 5v5 matches are scheduled on this date, 5v5 matches get morning priority (09:45, 10:45, 11:45).
-      // U14 Girls on 11v11 is scheduled after 5v5 fixtures conclude (at 12:00 or 14:00) so there is zero overlap.
-      const getPriority = (f: FAFixture) => {
-        if (f.pitchId === '11v11' && isU14GirlsTeam(f.scotterTeam || f.homeTeam)) {
-          return has5v5OnDate ? 10 : 4;
-        }
-        const priorities: Record<string, number> = {
-          '5v5': 1,
-          '7v7': 2,
-          '9v9': 3,
-          '11v11': 4,
-        };
-        return priorities[f.pitchId] || 5;
+      // Helper to count total matches on a pitch for this date (existing + assigned in this batch)
+      const getMatchCountOnPitch = (pId: PitchSize): number => {
+        const existingCount = bookings.filter(
+          (b) =>
+            b.date === date &&
+            b.pitchId === pId &&
+            b.status !== BookingStatus.DECLINED &&
+            b.status !== BookingStatus.UNBOOKED
+        ).length;
+        const batchCount = assignedOnDate.filter((a) => a.pitchId === pId).length;
+        return existingCount + batchCount;
       };
 
-      const sortedDateFixtures = [...dateFixtures].sort((a, b) => {
-        const pA = getPriority(a);
-        const pB = getPriority(b);
-        if (pA !== pB) return pA - pB;
-        return a.scotterTeam.localeCompare(b.scotterTeam) || a.id.localeCompare(b.id);
-      });
+      const checkClash = (
+        targetPitch: PitchSize,
+        slotStr: string,
+        teamName: string,
+        is3v3: boolean = false
+      ): boolean => {
+        const startMins = parseTimeToMinutes(slotStr);
+        const duration = is3v3
+          ? 60
+          : targetPitch === '11v11'
+          ? 120
+          : targetPitch === '9v9'
+          ? 90
+          : targetPitch === '7v7'
+          ? 75
+          : 60;
+        const endMins = startMins + duration;
 
-      sortedDateFixtures.forEach((f) => {
-        const standardSlots = getPitchSlots(f.pitchId);
+        // Check overlap with existing approved/pending bookings on this date
+        const hasBookingOverlap = bookings.some((b) => {
+          if (b.date !== date) return false;
+          if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) {
+            return false;
+          }
 
-        const checkClash = (slotStr: string) => {
-          const startMins = parseTimeToMinutes(slotStr);
-          const endMins = parseTimeToMinutes(
-            getAdminEndTimeForSlot(f.pitchId, date, slotStr)
-          );
+          const pitchMatches =
+            b.pitchId === targetPitch ||
+            (rules.prevent5v5_11v11Overlap &&
+              check5v5And11v11U14GirlsConflict(targetPitch, teamName, b.pitchId, b.teamName));
+          if (!pitchMatches) return false;
 
-          // Check overlap with existing approved/pending bookings on this date
-          const hasBookingOverlap = bookings.some((b) => {
-            if (b.date !== date) return false;
-            if (
-              b.status === BookingStatus.DECLINED ||
-              b.status === BookingStatus.UNBOOKED
-            ) {
-              return false;
-            }
+          const bStart = parseTimeToMinutes(b.timeSlot);
+          const bIs3v3 = is3v3Match(b.teamName, undefined, b.pitchId);
+          const bDuration = bIs3v3
+            ? 60
+            : b.pitchId === '11v11'
+            ? 120
+            : b.pitchId === '9v9'
+            ? 90
+            : b.pitchId === '7v7'
+            ? 75
+            : 60;
+          const bEnd = parseTimeToMinutes(b.endTime) || bStart + bDuration;
 
-            const pitchMatches =
-              b.pitchId === f.pitchId ||
-              (rules.prevent5v5_11v11Overlap &&
-                check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.homeTeam, b.pitchId, b.teamName));
-            if (!pitchMatches) return false;
+          return startMins < bEnd && bStart < endMins;
+        });
 
-            const bStart = parseTimeToMinutes(b.timeSlot);
-            const bEnd = parseTimeToMinutes(
-              b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot)
-            );
+        if (hasBookingOverlap) return true;
 
-            return startMins < bEnd && bStart < endMins;
-          });
+        // Check overlap with already assigned fixtures on this date in this batch
+        const hasAssignedOverlap = assignedOnDate.some((item) => {
+          const pitchMatches =
+            item.pitchId === targetPitch ||
+            (rules.prevent5v5_11v11Overlap &&
+              check5v5And11v11U14GirlsConflict(targetPitch, teamName, item.pitchId, item.team));
+          if (!pitchMatches) return false;
 
-          if (hasBookingOverlap) return true;
+          const itemStart = parseTimeToMinutes(item.slot);
+          const itemDuration = item.is3v3
+            ? 60
+            : item.pitchId === '11v11'
+            ? 120
+            : item.pitchId === '9v9'
+            ? 90
+            : item.pitchId === '7v7'
+            ? 75
+            : 60;
+          const itemEnd = itemStart + itemDuration;
 
-          // Check overlap with already assigned fixtures on this date in this batch
-          const hasAssignedOverlap = assignedOnDate.some((item) => {
-            const pitchMatches =
-              item.pitchId === f.pitchId ||
-              (rules.prevent5v5_11v11Overlap &&
-                check5v5And11v11U14GirlsConflict(f.pitchId, f.scotterTeam || f.homeTeam, item.pitchId, item.team));
-            if (!pitchMatches) return false;
+          return startMins < itemEnd && itemStart < endMins;
+        });
 
-            const itemStart = parseTimeToMinutes(item.slot);
-            const itemEnd = parseTimeToMinutes(
-              getAdminEndTimeForSlot(item.pitchId, date, item.slot)
-            );
+        return hasAssignedOverlap;
+      };
 
-            return startMins < itemEnd && itemStart < endMins;
-          });
+      const is3v3Fixture = (f: FAFixture) => is3v3Match(f.scotterTeam || f.homeTeam, undefined, f.pitchId, f.competition);
+      const isU14Girls11v11 = (f: FAFixture) => f.pitchId === '11v11' && isU14GirlsTeam(f.scotterTeam || f.homeTeam);
 
-          return hasAssignedOverlap;
-        };
+      const f3v3 = dateFixtures.filter(is3v3Fixture);
+      const f5v5 = dateFixtures.filter((f) => !is3v3Fixture(f) && f.pitchId === '5v5');
+      const fU14Girls = dateFixtures.filter(isU14Girls11v11);
+      const f7v7 = dateFixtures.filter((f) => !is3v3Fixture(f) && f.pitchId === '7v7');
+      const f9v9 = dateFixtures.filter((f) => !is3v3Fixture(f) && f.pitchId === '9v9');
+      const fOther11v11 = dateFixtures.filter((f) => !is3v3Fixture(f) && f.pitchId === '11v11' && !isU14Girls11v11(f));
 
+      // 1. Process 3v3 matches
+      // Hierarchy: try 9v9 first, then 7v7, then 5v5.
+      // Constraint: Ideally not more than two matches on each pitch. Keep duration to 1 hour without separate 1hr slots on 9v9/7v7.
+      f3v3.forEach((f) => {
+        const candidatePitches: PitchSize[] = ['9v9', '7v7', '5v5'];
+        let chosenPitch: PitchSize = '9v9';
         let chosenSlot = '';
 
-        // Find all available vacant standard prebookable slots for this pitch format
-        const vacantSlots = standardSlots.filter((s) => !checkClash(s));
-        vacantSlots.sort((s1, s2) => parseTimeToMinutes(s1) - parseTimeToMinutes(s2));
-
-        if (vacantSlots.length > 0) {
-          chosenSlot = vacantSlots[0];
-        } else {
-          // If all standard prebookable slots are booked or clashing, search across all possible daytime slots
-          const candidateSlots = [
-            '09:30', '09:45', '10:00', '10:45', '11:00', '11:15', '11:30', '11:45',
-            '12:00', '12:15', '12:30', '12:45', '13:00', '13:15', '13:30', '13:45',
-            '14:00', '14:15', '14:30', '14:45', '15:00', '15:15', '15:30', '15:45', '16:00'
-          ];
-          const nonClashing = candidateSlots.filter((s) => !checkClash(s));
-          if (nonClashing.length > 0) {
-            chosenSlot = nonClashing[0];
-          } else {
-            const samePitchAssigned = assignedOnDate.filter((a) => a.pitchId === f.pitchId);
-            if (samePitchAssigned.length > 0) {
-              const lastSlot = samePitchAssigned[samePitchAssigned.length - 1].slot;
-              const nextStart = getAdminEndTimeForSlot(f.pitchId, date, lastSlot);
-              chosenSlot = nextStart || '14:00';
-            } else {
-              chosenSlot = f.pitchId === '11v11' && isU14GirlsTeam(f.scotterTeam || f.homeTeam) ? '14:00' : (standardSlots[0] || '10:00');
+        // Priority pass A: Candidate pitch with match count < 2 and a vacant standard pitch slot
+        for (const p of candidatePitches) {
+          if (getMatchCountOnPitch(p) < 2) {
+            const slots = getPitchSlots(p);
+            const vacant = slots.filter((s) => !checkClash(p, s, f.scotterTeam || f.homeTeam, true));
+            if (vacant.length > 0) {
+              chosenPitch = p;
+              chosenSlot = vacant[0];
+              break;
             }
           }
         }
 
+        // Priority pass B: If none had < 2 matches, sort by lowest count in hierarchy order
+        if (!chosenSlot) {
+          const sortedCandidates = [...candidatePitches].sort((a, b) => getMatchCountOnPitch(a) - getMatchCountOnPitch(b));
+          for (const p of sortedCandidates) {
+            const slots = getPitchSlots(p);
+            const vacant = slots.filter((s) => !checkClash(p, s, f.scotterTeam || f.homeTeam, true));
+            if (vacant.length > 0) {
+              chosenPitch = p;
+              chosenSlot = vacant[0];
+              break;
+            }
+          }
+        }
+
+        // Fallback if needed
+        if (!chosenSlot) {
+          chosenPitch = '5v5';
+          chosenSlot = getPitchSlots('5v5')[0] || '09:45';
+        }
+
         recordUsage(f.scotterTeam, chosenSlot);
-        assignedOnDate.push({ pitchId: f.pitchId, slot: chosenSlot, team: f.scotterTeam });
+        assignedOnDate.push({ pitchId: chosenPitch, slot: chosenSlot, team: f.scotterTeam, is3v3: true });
+        assignedPitches.set(f.id, chosenPitch);
+        assignedSlots.set(f.id, chosenSlot);
+      });
+
+      // 2. Process non-3v3 5v5 matches
+      f5v5.forEach((f) => {
+        const standardSlots = getPitchSlots('5v5');
+        const vacant = standardSlots.filter((s) => !checkClash('5v5', s, f.scotterTeam || f.homeTeam, false));
+        const chosenSlot = vacant[0] || standardSlots[0] || '09:45';
+
+        recordUsage(f.scotterTeam, chosenSlot);
+        assignedOnDate.push({ pitchId: '5v5', slot: chosenSlot, team: f.scotterTeam, is3v3: false });
+        assignedPitches.set(f.id, '5v5');
+        assignedSlots.set(f.id, chosenSlot);
+      });
+
+      // 3. Process U14 Girls on 11v11
+      // Constraint: Should not kick off later than 12:00 due to potential morning 3v3 on 5v5.
+      // The 11v11 can also be used for an 11am kick off if the 5v5 allows.
+      fU14Girls.forEach((f) => {
+        const candidateSlots = ['11:00', '12:00', '10:00'];
+        const vacant = candidateSlots.filter((s) => !checkClash('11v11', s, f.scotterTeam || f.homeTeam, false));
+        const chosenSlot = vacant[0] || '12:00';
+
+        recordUsage(f.scotterTeam, chosenSlot);
+        assignedOnDate.push({ pitchId: '11v11', slot: chosenSlot, team: f.scotterTeam, is3v3: false });
+        assignedPitches.set(f.id, '11v11');
+        assignedSlots.set(f.id, chosenSlot);
+      });
+
+      // 4. Process regular 7v7 matches
+      f7v7.forEach((f) => {
+        const standardSlots = getPitchSlots('7v7');
+        const vacant = standardSlots.filter((s) => !checkClash('7v7', s, f.scotterTeam || f.homeTeam, false));
+        const chosenSlot = vacant[0] || standardSlots[0] || '09:30';
+
+        recordUsage(f.scotterTeam, chosenSlot);
+        assignedOnDate.push({ pitchId: '7v7', slot: chosenSlot, team: f.scotterTeam, is3v3: false });
+        assignedPitches.set(f.id, '7v7');
+        assignedSlots.set(f.id, chosenSlot);
+      });
+
+      // 5. Process regular 9v9 matches
+      f9v9.forEach((f) => {
+        const standardSlots = getPitchSlots('9v9');
+        const vacant = standardSlots.filter((s) => !checkClash('9v9', s, f.scotterTeam || f.homeTeam, false));
+        const chosenSlot = vacant[0] || standardSlots[0] || '09:30';
+
+        recordUsage(f.scotterTeam, chosenSlot);
+        assignedOnDate.push({ pitchId: '9v9', slot: chosenSlot, team: f.scotterTeam, is3v3: false });
+        assignedPitches.set(f.id, '9v9');
+        assignedSlots.set(f.id, chosenSlot);
+      });
+
+      // 6. Process other 11v11 matches
+      fOther11v11.forEach((f) => {
+        const standardSlots = getPitchSlots('11v11');
+        const vacant = standardSlots.filter((s) => !checkClash('11v11', s, f.scotterTeam || f.homeTeam, false));
+        const chosenSlot = vacant[0] || (standardSlots.includes('14:00') ? '14:00' : standardSlots[0] || '14:00');
+
+        recordUsage(f.scotterTeam, chosenSlot);
+        assignedOnDate.push({ pitchId: '11v11', slot: chosenSlot, team: f.scotterTeam, is3v3: false });
+        assignedPitches.set(f.id, '11v11');
         assignedSlots.set(f.id, chosenSlot);
       });
     });
@@ -1167,6 +1293,7 @@ export default function AdminPanel({
         return {
           ...f,
           timeSlot: assignedSlots.get(f.id)!,
+          pitchId: assignedPitches.get(f.id) || f.pitchId,
         };
       }
       return f;
@@ -1190,7 +1317,7 @@ export default function AdminPanel({
       const officialFixtures = MOCK_FA_FULLTIME_FIXTURES.map(f => ({ ...f, timeSlot: '' }));
       const optimized = optimizeFixturesSlots(officialFixtures, true);
       setParsedFixtures(optimized);
-      const homeFixtureIds = optimized.filter(isScotterHomeFixture).map((p) => p.id);
+      const homeFixtureIds = optimized.filter(isHomeFixture).map((p) => p.id);
       setSelectedParsedIds(homeFixtureIds);
       setImportFeedback(`FA Full-Time Link Loaded! Synced ${optimized.length} released fixtures for Season #${seasonId} (Team #${teamId}) with fair prebookable kick-off times. ${homeFixtureIds.length} home matches selected.`);
       return;
@@ -1227,14 +1354,14 @@ export default function AdminPanel({
           if (homeTeam && homeTeam.toLowerCase() !== 'home' && homeTeam.toLowerCase() !== 'home team') {
             let scotterTeam = '';
             if (homeTeam.toLowerCase().includes('scotter')) {
-              scotterTeam = findBestTeamMatch(homeTeam, line);
+              scotterTeam = matchTeam(homeTeam, line);
             } else if (awayTeam.toLowerCase().includes('scotter')) {
-              scotterTeam = findBestTeamMatch(awayTeam, line);
+              scotterTeam = matchTeam(awayTeam, line);
             } else {
-              scotterTeam = findBestTeamMatch(homeTeam, line);
+              scotterTeam = matchTeam(homeTeam, line);
             }
 
-            const teamObj = SCOTTER_TEAMS.find((t) => t.name === scotterTeam);
+            const teamObj = availableTeams.find((t) => t.name === scotterTeam);
             const pitchId = teamObj ? teamObj.pitchSize : '11v11';
 
             parsed.push({
@@ -1394,8 +1521,8 @@ export default function AdminPanel({
       awayTeam = awayTeam.replace(/^(L|Cup|League|Match)\b\s*/i, '').trim();
 
       if (homeTeam && homeTeam.toLowerCase() !== 'home' && homeTeam.toLowerCase() !== 'home team') {
-        const suggestedTeam = findBestTeamMatch(homeTeam, line);
-        const teamObj = SCOTTER_TEAMS.find((t) => t.name === suggestedTeam);
+        const suggestedTeam = matchTeam(homeTeam, line);
+        const teamObj = availableTeams.find((t) => t.name === suggestedTeam);
         const pitchId = teamObj ? teamObj.pitchSize : '11v11';
 
         parsed.push({
@@ -1416,7 +1543,7 @@ export default function AdminPanel({
     } else {
       const optimized = optimizeFixturesSlots(parsed);
       setParsedFixtures(optimized);
-      const homeFixtureIds = optimized.filter(isScotterHomeFixture).map((p) => p.id);
+      const homeFixtureIds = optimized.filter(isHomeFixture).map((p) => p.id);
       setSelectedParsedIds(homeFixtureIds);
       const awayCount = optimized.length - homeFixtureIds.length;
       if (awayCount > 0) {
@@ -1437,7 +1564,7 @@ export default function AdminPanel({
       return;
     }
 
-    const teamObj = SCOTTER_TEAMS.find((t) => t.name === bulkRemapTeam);
+    const teamObj = availableTeams.find((t) => t.name === bulkRemapTeam);
     const pitchId = teamObj ? teamObj.pitchSize : '11v11';
 
     setParsedFixtures((prev) => {
@@ -1458,7 +1585,7 @@ export default function AdminPanel({
   };
 
   const handleIndividualRemap = (id: string, teamName: string) => {
-    const teamObj = SCOTTER_TEAMS.find((t) => t.name === teamName);
+    const teamObj = availableTeams.find((t) => t.name === teamName);
     const pitchId = teamObj ? teamObj.pitchSize : '11v11';
 
     setParsedFixtures((prev) => {
@@ -1507,8 +1634,8 @@ export default function AdminPanel({
         if (f.id === id) {
           const updatedHome = f.awayTeam;
           const updatedAway = f.homeTeam;
-          const isNowHome = isScotterHomeFixture({ homeTeam: updatedHome, awayTeam: updatedAway, scotterTeam: f.scotterTeam });
-          const suggestedTeam = isNowHome ? findBestTeamMatch(updatedHome) : f.scotterTeam;
+          const isNowHome = isHomeFixture({ homeTeam: updatedHome, awayTeam: updatedAway, scotterTeam: f.scotterTeam });
+          const suggestedTeam = isNowHome ? matchTeam(updatedHome) : f.scotterTeam;
           
           return {
             ...f,
@@ -1598,7 +1725,7 @@ export default function AdminPanel({
       for (let i = 0; i < list.length; i++) {
         const f1 = list[i];
         const f1Start = parseTimeToMinutes(f1.timeSlot);
-        const f1End = parseTimeToMinutes(getAdminEndTimeForSlot(f1.pitchId, f1.date, f1.timeSlot));
+        const f1End = parseTimeToMinutes(getAdminEndTimeForSlot(f1.pitchId, f1.date, f1.timeSlot, f1.scotterTeam || f1.homeTeam));
 
         for (let j = i + 1; j < list.length; j++) {
           const f2 = list[j];
@@ -1609,7 +1736,7 @@ export default function AdminPanel({
           if (!pitchMatches) continue;
 
           const f2Start = parseTimeToMinutes(f2.timeSlot);
-          const f2End = parseTimeToMinutes(getAdminEndTimeForSlot(f2.pitchId, f2.date, f2.timeSlot));
+          const f2End = parseTimeToMinutes(getAdminEndTimeForSlot(f2.pitchId, f2.date, f2.timeSlot, f2.scotterTeam || f2.homeTeam));
 
           if (f1Start < f2End && f2Start < f1End) {
             if (!mutualClashing.includes(f1)) mutualClashing.push(f1);
@@ -1641,7 +1768,7 @@ export default function AdminPanel({
 
     const clashingSelected = newHomeMatchesToBook.filter((f) => {
       const fStart = parseTimeToMinutes(f.timeSlot);
-      const fEnd = parseTimeToMinutes(getAdminEndTimeForSlot(f.pitchId, f.date, f.timeSlot));
+      const fEnd = parseTimeToMinutes(getAdminEndTimeForSlot(f.pitchId, f.date, f.timeSlot, f.scotterTeam || f.homeTeam));
 
       return bookings.some((b) => {
         const pitchMatches = b.pitchId === f.pitchId || 
@@ -1650,7 +1777,7 @@ export default function AdminPanel({
         if (b.status === BookingStatus.DECLINED || b.status === BookingStatus.UNBOOKED) return false;
 
         const bStart = parseTimeToMinutes(b.timeSlot);
-        const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot));
+        const bEnd = parseTimeToMinutes(b.endTime || getAdminEndTimeForSlot(b.pitchId, b.date, b.timeSlot, b.teamName));
 
         return fStart < bEnd && bStart < fEnd;
       });
@@ -1663,7 +1790,7 @@ export default function AdminPanel({
     }
 
     const newBookings: Booking[] = newHomeMatchesToBook.map((f, idx) => {
-      const endTime = getAdminEndTimeForSlot(f.pitchId, f.date, f.timeSlot);
+      const endTime = getAdminEndTimeForSlot(f.pitchId, f.date, f.timeSlot, f.scotterTeam || f.homeTeam);
       return {
         id: `b-pasted-import-${Date.now()}-${idx}`,
         pitchId: f.pitchId,
@@ -1933,7 +2060,7 @@ export default function AdminPanel({
                       <option value="">-- Choose Team --</option>
                       {teamCategories.map((cat) => (
                         <optgroup key={cat} label={`${cat} Section`} className="bg-slate-900 text-blue-300 font-bold">
-                          {SCOTTER_TEAMS.filter((t) => t.category === cat).map((t) => (
+                          {availableTeams.filter((t) => t.category === cat).map((t) => (
                             <option key={t.name} value={t.name} className="text-white font-medium">
                               {t.name} ({t.pitchSize})
                             </option>
@@ -2820,7 +2947,7 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                                   className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none"
                               >
                                 <option value="">-- Bulk Map Selected To --</option>
-                                {SCOTTER_TEAMS.map((t) => (
+                                {availableTeams.map((t) => (
                                   <option key={t.name} value={t.name}>
                                     {t.name} ({t.pitchSize})
                                   </option>
@@ -2947,7 +3074,7 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
                                                 mismatch ? 'border-amber-500 focus:border-amber-400' : 'border-slate-700 focus:border-blue-500'
                                               }`}
                                             >
-                                              {SCOTTER_TEAMS.map((t) => (
+                                              {availableTeams.map((t) => (
                                                 <option key={t.name} value={t.name}>
                                                   {t.name}
                                                 </option>

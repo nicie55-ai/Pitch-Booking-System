@@ -126,10 +126,10 @@ export const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     date: '2026-08-29',
     timeSlot: '10:00',
     pitchId: '11v11',
-    homeTeam: 'Scotter United U14s',
+    homeTeam: 'Scotter United U14 Juniors',
     awayTeam: 'Bottesford Town U14s',
     competition: 'Pre-Season Friendly',
-    scotterTeam: 'Scotter United U14s',
+    scotterTeam: 'Scotter United U14 Juniors',
   },
   {
     id: 'fa-ps-0829-14',
@@ -302,10 +302,10 @@ export const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     date: '2026-09-05',
     timeSlot: '10:00',
     pitchId: '11v11',
-    homeTeam: 'Scotter United U14s',
+    homeTeam: 'Scotter United U14 Juniors',
     awayTeam: 'Grimsby Borough U14s',
     competition: 'Jack Kalson Warm-up Trophy',
-    scotterTeam: 'Scotter United U14s',
+    scotterTeam: 'Scotter United U14 Juniors',
   },
   {
     id: 'fa-ps-0905-15',
@@ -368,10 +368,10 @@ export const RAW_MOCK_FA_FULLTIME_FIXTURES: FAFixture[] = [
     date: '2026-09-09',
     timeSlot: '18:30',
     pitchId: '11v11',
-    homeTeam: 'Scotter United U14s',
+    homeTeam: 'Scotter United U14 Juniors',
     awayTeam: 'Bottesford Town U14s',
     competition: 'Midweek Cup Preliminary',
-    scotterTeam: 'Scotter United U14s',
+    scotterTeam: 'Scotter United U14 Juniors',
   },
 
   // ==========================================================

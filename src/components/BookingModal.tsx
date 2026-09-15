@@ -6,9 +6,9 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { X, Calendar, Clock, MapPin, Clipboard, FileText, AlertTriangle } from 'lucide-react';
-import { PitchSize, Booking, BookingStatus, User } from '../types';
+import { PitchSize, Booking, BookingStatus, User, ClubTeam } from '../types';
 import { SCOTTER_TEAMS, FAFixture } from '../mockData';
-import { parseDateLocal, formatDateUK, check5v5And11v11U14GirlsConflict } from '../utils/bookingUtils';
+import { parseDateLocal, formatDateUK, check5v5And11v11U14GirlsConflict, is3v3Match } from '../utils/bookingUtils';
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -31,6 +31,7 @@ interface BookingModalProps {
   existingBookings: Booking[];
   currentUser: User;
   faFixtures?: FAFixture[];
+  teams?: ClubTeam[];
 }
 
 export default function BookingModal({
@@ -46,7 +47,9 @@ export default function BookingModal({
   existingBookings,
   currentUser,
   faFixtures,
+  teams,
 }: BookingModalProps) {
+  const availableTeams = teams && teams.length > 0 ? teams : SCOTTER_TEAMS;
   const [pitchId, setPitchId] = useState<PitchSize>(selectedPitchId);
   const [date, setDate] = useState<string>(selectedDate);
   const [timeSlot, setTimeSlot] = useState<string>(selectedSlot);
@@ -66,12 +69,26 @@ export default function BookingModal({
   };
 
   // Helper to determine the standard end time for a given slot, date, and pitch format
-  const getEndTimeForSlot = (pId: PitchSize, dateStr: string, slot: string, type: 'STANDARD' | 'MATCH' = bookingType): string => {
+  const getEndTimeForSlot = (
+    pId: PitchSize,
+    dateStr: string,
+    slot: string,
+    type: 'STANDARD' | 'MATCH' = bookingType,
+    teamNameOverride?: string
+  ): string => {
     if (!slot) return '';
     const [hStr, mStr] = slot.split(':');
     const hNum = parseInt(hStr, 10);
     const mNum = parseInt(mStr, 10);
     if (isNaN(hNum) || isNaN(mNum)) return '';
+
+    const activeTeam = teamNameOverride || (currentUser.role === 'ADMIN' ? adminSelectedTeam : currentUser.teamName) || '';
+    if (is3v3Match(activeTeam, undefined, pId, notes)) {
+      const totalMinutes = hNum * 60 + mNum + 60; // 3v3 matches strictly 1 hour
+      const h = Math.floor(totalMinutes / 60);
+      const m = totalMinutes % 60;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
 
     // Default weekday durations: Standard is 60m, Match is 75m
     let duration = type === 'MATCH' ? 75 : 60;
@@ -170,7 +187,7 @@ export default function BookingModal({
     let baseSlots: string[] = [];
     if (isWeekend) {
       if (pitchId === '11v11') {
-        baseSlots = ['10:00', '12:00'];
+        baseSlots = ['10:00', '11:00', '12:00', '14:00'];
       } else {
         baseSlots = ['09:30', '10:45', '12:00'];
       }
@@ -246,11 +263,11 @@ export default function BookingModal({
       let baseSlots: string[] = [];
       if (isWeekend) {
         if (selected === '11v11') {
-          baseSlots = ['10:00', '12:00'];
+          baseSlots = ['10:00', '11:00', '12:00', '14:00'];
         } else if (selected === '9v9') {
           baseSlots = ['09:30', '11:00', '12:30'];
         } else if (selected === '7v7') {
-          baseSlots = ['09:30', '10:45', '12:00', '13:30'];
+          baseSlots = ['09:30', '10:45', '12:00', '13:15', '14:45'];
         } else if (selected === '5v5') {
           baseSlots = ['09:45', '10:45', '11:45'];
         }
@@ -533,13 +550,32 @@ export default function BookingModal({
               </label>
               <select
                 value={adminSelectedTeam}
-                onChange={(e) => setAdminSelectedTeam(e.target.value)}
+                onChange={(e) => {
+                  const newTeamName = e.target.value;
+                  setAdminSelectedTeam(newTeamName);
+                  if (is3v3Match(newTeamName)) {
+                    // For 3v3, try 9v9 first, then 7v7, then 5v5, preferring pitches with < 2 matches
+                    const candidatePitches: PitchSize[] = ['9v9', '7v7', '5v5'];
+                    const getCount = (p: PitchSize) =>
+                      existingBookings.filter(
+                        (b) => b.date === date && b.pitchId === p && b.status !== BookingStatus.DECLINED && b.status !== BookingStatus.UNBOOKED
+                      ).length;
+                    const bestPitch = candidatePitches.find((p) => getCount(p) < 2) ||
+                      [...candidatePitches].sort((a, b) => getCount(a) - getCount(b))[0];
+                    setPitchId(bestPitch);
+                  } else {
+                    const matchedTeam = availableTeams.find((t) => t.name === newTeamName);
+                    if (matchedTeam && matchedTeam.pitchSize) {
+                      setPitchId(matchedTeam.pitchSize);
+                    }
+                  }
+                }}
                 className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg py-2.5 px-3 text-slate-800 font-semibold focus:border-blue-900 focus:outline-none"
                 required
               >
-                {Array.from(new Set(SCOTTER_TEAMS.map((t) => t.category))).map((cat) => (
+                {Array.from(new Set(availableTeams.map((t) => t.category))).map((cat) => (
                   <optgroup key={cat} label={`${cat} Section`} className="bg-white text-blue-900 font-bold">
-                    {SCOTTER_TEAMS.filter((t) => t.category === cat).map((t) => (
+                    {availableTeams.filter((t) => t.category === cat).map((t) => (
                       <option key={t.name} value={t.name} className="text-slate-800 font-medium">
                         {t.name}
                       </option>

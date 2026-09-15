@@ -76,8 +76,13 @@ export function isTeamMatch(userTeam?: string, bookingTeam?: string): boolean {
   const normBooking = normalizeTeamName(bookingTeam);
 
   if (!normUser || !normBooking) return false;
+  if (normUser === normBooking) return true;
 
-  return normUser === normBooking;
+  // Seamless alias matching between U14s / U14 and U14 Juniors
+  if ((normUser === 'u14' || normUser === 'u14s') && normBooking === 'u14 juniors') return true;
+  if ((normBooking === 'u14' || normBooking === 'u14s') && normUser === 'u14 juniors') return true;
+
+  return false;
 }
 
 /**
@@ -278,4 +283,53 @@ export function parseTimeToMinutes(t: string): number {
   const [h, m] = t.split(':').map(Number);
   return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
 }
+
+/**
+ * Detects if a team, fixture, or booking refers to 3v3 format or U7 development football.
+ */
+export function is3v3Match(
+  teamName?: string,
+  category?: string,
+  pitchId?: string,
+  notes?: string
+): boolean {
+  if (!teamName && !category && !pitchId && !notes) return false;
+  const t = (teamName || '').toLowerCase();
+  const c = (category || '').toLowerCase();
+  const n = (notes || '').toLowerCase();
+  const p = (pitchId || '').toLowerCase();
+
+  if (p === '3v3') return true;
+  if (t.includes('3v3') || c.includes('3v3') || n.includes('3v3')) return true;
+  if (t.includes('u7') || c.includes('u7') || n.includes('u7')) return true;
+
+  return false;
+}
+
+/**
+ * Returns duration in minutes for a match, enforcing 1 hour (60m) for 3v3 format.
+ */
+export function getMatchDurationMinutes(
+  pitchId: string,
+  dateStr: string,
+  teamName?: string,
+  notes?: string
+): number {
+  if (is3v3Match(teamName, undefined, pitchId, notes)) {
+    return 60; // 3v3 matches are strictly 1 hour
+  }
+  if (!dateStr) return 60;
+  const d = parseDateLocal(dateStr);
+  const day = d.getDay();
+  const isWeekend = day === 0 || day === 6;
+
+  if (isWeekend) {
+    if (pitchId === '11v11') return 120;
+    if (pitchId === '9v9') return 90;
+    if (pitchId === '7v7') return 75;
+    if (pitchId === '5v5') return 60;
+  }
+  return 60;
+}
+
 

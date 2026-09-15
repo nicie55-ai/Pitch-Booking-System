@@ -18,8 +18,11 @@ import {
   saveBookingToFirestore,
   saveBookingsBulkToFirestore,
   deleteBookingFromFirestore,
+  deleteBookingsBulkFromFirestore,
   syncBookingsListToFirestore,
   saveFaFixtureToFirestore,
+  deleteFaFixtureFromFirestore,
+  deleteFaFixturesBulkFromFirestore,
   syncFaFixturesListToFirestore,
   savePitchConfigsListToFirestore,
   saveSlotChangeRequestToFirestore,
@@ -46,7 +49,7 @@ import SlotConfigurator from './components/SlotConfigurator';
 import BookingModal from './components/BookingModal';
 import CoachesSetup from './components/CoachesSetup';
 import LoginModal from './components/LoginModal';
-import { isU14GirlsTeam, parseTimeToMinutes, check5v5And11v11U14GirlsConflict } from './utils/bookingUtils';
+import { isU14GirlsTeam, parseTimeToMinutes, check5v5And11v11U14GirlsConflict, is3v3Match } from './utils/bookingUtils';
 
 export default function App() {
   // Load initial state from LocalStorage or mock data
@@ -59,19 +62,28 @@ export default function App() {
     }));
   });
 
+  const [toastNotification, setToastNotification] = useState<{ message: string; type?: 'success' | 'info' } | null>(null);
+
+  useEffect(() => {
+    if (toastNotification) {
+      const timer = setTimeout(() => setToastNotification(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastNotification]);
+
   const [faFixtures, setFaFixtures] = useState<FAFixture[]>(() => {
     const saved = localStorage.getItem('scotter_jfc_fa_fixtures');
-    if (saved) {
+    if (saved !== null) {
       try {
-        const parsed: FAFixture[] = JSON.parse(saved);
-        if (parsed.length > 0) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
           return parsed;
         }
       } catch (err) {
         console.warn('Error parsing cached fa fixtures:', err);
       }
     }
-    return MOCK_FA_FULLTIME_FIXTURES;
+    return [];
   });
 
   useEffect(() => {
@@ -83,17 +95,21 @@ export default function App() {
     const teamPitchMap = Object.fromEntries(SCOTTER_TEAMS.map(t => [t.name, t.pitchSize]));
     const standardEarlySlots: Record<string, string[]> = {
       '5v5': ['09:45', '10:45', '11:45', '12:45', '13:45'],
-      '7v7': ['09:30', '10:45', '12:00', '13:30', '14:45'],
+      '7v7': ['09:30', '10:45', '12:00', '13:15', '14:45'],
       '9v9': ['09:30', '11:00', '12:30', '14:00'],
-      '11v11': ['10:00', '12:00', '14:00'],
+      '11v11': ['10:00', '11:00', '12:00', '14:00'],
     };
 
     let currentFa = [...faFixtures];
     let faChanged = false;
 
-    // 1. Map pitch formats correctly
+    // 1. Map pitch formats correctly (allowing 3v3 matches to be hosted on 9v9, 7v7, or 5v5)
     currentFa = currentFa.map(f => {
-      const canonicalPitch = teamPitchMap[f.scotterTeam] || ((f.pitchId as string) === '3v3' ? '5v5' : f.pitchId);
+      const is3v3 = is3v3Match(f.scotterTeam || f.homeTeam, undefined, f.pitchId, f.competition);
+      if (is3v3 && ['9v9', '7v7', '5v5'].includes(f.pitchId)) {
+        return f;
+      }
+      const canonicalPitch = teamPitchMap[f.scotterTeam] || ((f.pitchId as string) === '3v3' ? '9v9' : f.pitchId);
       if (f.pitchId !== canonicalPitch) {
         faChanged = true;
         return { ...f, pitchId: canonicalPitch };
@@ -169,9 +185,13 @@ export default function App() {
     let currentBookings = [...bookings];
     let bookingsChanged = false;
 
-    // 1. Map pitch formats correctly
+    // 1. Map pitch formats correctly (allowing 3v3 matches to be hosted on 9v9, 7v7, or 5v5)
     currentBookings = currentBookings.map(b => {
-      const canonicalPitch = teamPitchMap[b.teamName] || ((b.pitchId as string) === '3v3' ? '5v5' : b.pitchId);
+      const is3v3 = is3v3Match(b.teamName, undefined, b.pitchId, b.notes);
+      if (is3v3 && ['9v9', '7v7', '5v5'].includes(b.pitchId)) {
+        return b;
+      }
+      const canonicalPitch = teamPitchMap[b.teamName] || ((b.pitchId as string) === '3v3' ? '9v9' : b.pitchId);
       if (b.pitchId !== canonicalPitch) {
         bookingsChanged = true;
         return { ...b, pitchId: canonicalPitch };
@@ -253,7 +273,7 @@ export default function App() {
     // Upgrade existing stored configs to new slots automatically
     configs = configs.map(cfg => {
       if (cfg.id === '11v11') {
-        const slots = Array.from(new Set([...cfg.defaultSlots.filter(s => s !== '16:00'), '10:00', '12:00', '14:00'])).sort();
+        const slots = Array.from(new Set([...cfg.defaultSlots.filter(s => s !== '16:00'), '10:00', '11:00', '12:00', '14:00'])).sort();
         return { ...cfg, defaultSlots: slots };
       }
       if (cfg.id === '9v9' && (cfg.defaultSlots.includes('10:45') || cfg.defaultSlots.includes('12:00'))) {
@@ -263,8 +283,9 @@ export default function App() {
         const slots = Array.from(new Set([...cfg.defaultSlots.filter(s => s !== '09:30' && s !== '12:00'), '09:45', '10:45', '11:45', '12:45', '13:45'])).sort();
         return { ...cfg, defaultSlots: slots };
       }
-      if (cfg.id === '7v7' && (!cfg.defaultSlots.includes('13:30') || cfg.defaultSlots.includes('13:15'))) {
-        return { ...cfg, defaultSlots: ['09:30', '10:45', '12:00', '13:30', '14:45'] };
+      if (cfg.id === '7v7') {
+        const slots = Array.from(new Set([...cfg.defaultSlots.filter(s => s !== '13:30'), '09:30', '10:45', '12:00', '13:15', '14:45'])).sort();
+        return { ...cfg, defaultSlots: slots };
       }
       return cfg;
     });
@@ -306,7 +327,13 @@ export default function App() {
   const [teams, setTeams] = useState<ClubTeam[]>(() => {
     const saved = localStorage.getItem('scotter_jfc_teams');
     const loaded: ClubTeam[] = saved ? JSON.parse(saved) : SCOTTER_TEAMS;
-    return loaded.map(t => ((t.pitchSize as string) === '3v3' ? { ...t, pitchSize: '5v5' as PitchSize } : t));
+    return loaded.map(t => {
+      let updated = t;
+      if (updated.name === 'U14s' || updated.name === 'Scotter United U14s') {
+        updated = { ...updated, name: 'U14 Juniors' };
+      }
+      return ((updated.pitchSize as string) === '3v3' ? { ...updated, pitchSize: '5v5' as PitchSize } : updated);
+    });
   });
 
   useEffect(() => {
@@ -391,7 +418,13 @@ export default function App() {
       },
       onTeamsUpdate: (fetchedTeams) => {
         if (fetchedTeams && fetchedTeams.length > 0) {
-          setTeams(fetchedTeams);
+          const sanitized = fetchedTeams.map((t) => {
+            if (t.name === 'U14s' || t.name === 'Scotter United U14s') {
+              return { ...t, name: 'U14 Juniors' };
+            }
+            return t;
+          });
+          setTeams(sanitized);
         }
       },
       onBookingsUpdate: (fetchedBookings) => {
@@ -401,7 +434,8 @@ export default function App() {
       },
       onFaFixturesUpdate: (fetchedFixtures) => {
         if (fetchedFixtures) {
-          setFaFixtures(fetchedFixtures.length > 0 ? fetchedFixtures : MOCK_FA_FULLTIME_FIXTURES);
+          setFaFixtures(fetchedFixtures);
+          localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(fetchedFixtures));
         }
       },
       onPitchConfigsUpdate: (fetchedConfigs) => {
@@ -410,7 +444,7 @@ export default function App() {
             .filter((c) => (c.id as string) !== '3v3')
             .map((c) => {
               if (c.id === '11v11') {
-                const slots = Array.from(new Set([...c.defaultSlots.filter((s) => s !== '16:00'), '10:00', '12:00', '14:00'])).sort();
+                const slots = Array.from(new Set([...c.defaultSlots.filter((s) => s !== '16:00'), '10:00', '11:00', '12:00', '14:00'])).sort();
                 return { ...c, defaultSlots: slots };
               }
               return c;
@@ -519,6 +553,92 @@ export default function App() {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       syncFaFixturesListToFirestore(next).catch(console.error);
       return next;
+    });
+  };
+
+  const handleDeleteFaFixture = (fixtureId: string) => {
+    const fixtureToDelete = faFixtures.find((f) => f.id === fixtureId);
+
+    // 1. Delete directly from Firestore faFixtures collection
+    deleteFaFixtureFromFirestore(fixtureId).catch(console.error);
+
+    // 2. Remove from React state and localStorage immediately
+    setFaFixtures((prev) => {
+      const next = prev.filter((f) => f.id !== fixtureId);
+      localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(next));
+      return next;
+    });
+
+    // 3. Find and delete any linked booking in Firestore & bookings state
+    if (fixtureToDelete) {
+      const linkedBookings = bookings.filter((b) =>
+        (b.pitchId === fixtureToDelete.pitchId && b.date === fixtureToDelete.date && b.timeSlot === fixtureToDelete.timeSlot) ||
+        (b.notes && (
+          (fixtureToDelete.homeTeam && b.notes.includes(fixtureToDelete.homeTeam)) ||
+          (fixtureToDelete.awayTeam && b.notes.includes(fixtureToDelete.awayTeam)) ||
+          (fixtureToDelete.scotterTeam && b.notes.includes(fixtureToDelete.scotterTeam))
+        ) && b.date === fixtureToDelete.date)
+      );
+
+      linkedBookings.forEach((b) => {
+        handleCancelBooking(b.id);
+      });
+    }
+
+    setToastNotification({
+      type: 'success',
+      message: 'Fixture and any associated pitch bookings permanently removed from database.',
+    });
+  };
+
+  const handleDeleteFaFixturesBulk = (fixtureIds: string[], bookingIds?: string[]) => {
+    const idSet = new Set(fixtureIds);
+    const fixturesToDelete = faFixtures.filter((f) => idSet.has(f.id));
+
+    // 1. Delete fixtures from Firestore
+    if (fixtureIds.length > 0) {
+      deleteFaFixturesBulkFromFirestore(fixtureIds).catch(console.error);
+    }
+
+    // 2. Update faFixtures state & localStorage
+    setFaFixtures((prev) => {
+      const next = prev.filter((f) => !idSet.has(f.id));
+      localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(next));
+      return next;
+    });
+
+    // 3. Collect all linked booking IDs
+    const allBookingIdsToDelete = new Set<string>(bookingIds || []);
+    fixturesToDelete.forEach((f) => {
+      bookings.forEach((b) => {
+        if (
+          (b.pitchId === f.pitchId && b.date === f.date && b.timeSlot === f.timeSlot) ||
+          (b.notes && (
+            (f.homeTeam && b.notes.includes(f.homeTeam)) ||
+            (f.awayTeam && b.notes.includes(f.awayTeam)) ||
+            (f.scotterTeam && b.notes.includes(f.scotterTeam))
+          ) && b.date === f.date)
+        ) {
+          allBookingIdsToDelete.add(b.id);
+        }
+      });
+    });
+
+    // 4. Delete bookings from Firestore and state
+    if (allBookingIdsToDelete.size > 0) {
+      const bIdsArray = Array.from(allBookingIdsToDelete);
+      deleteBookingsBulkFromFirestore(bIdsArray).catch(console.error);
+      setBookings((prev) => {
+        const next = prev.filter((b) => !allBookingIdsToDelete.has(b.id));
+        localStorage.setItem('scotter_jfc_bookings', JSON.stringify(next));
+        return next;
+      });
+    }
+
+    const totalCount = fixtureIds.length + allBookingIdsToDelete.size;
+    setToastNotification({
+      type: 'success',
+      message: `${totalCount} item(s) permanently removed from Firestore database.`,
     });
   };
 
@@ -958,7 +1078,11 @@ export default function App() {
                 )}
               </span>
             </div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2.5">
+              <div className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1 bg-emerald-500/20 border border-emerald-400/30 rounded-full text-emerald-200 text-[11px] font-semibold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Firestore Cloud Sync Active</span>
+              </div>
               {currentUser.role === 'ADMIN' && (
                 <button
                   onClick={() => setIsLoginModalOpen(true)}
@@ -1061,6 +1185,7 @@ export default function App() {
                     pitchConfigs={pitchConfigs}
                     bookings={bookings}
                     currentUser={currentUser}
+                    teams={teams}
                     onRequestBooking={handleOpenBookingModal}
                     onApproveBooking={handleApproveBooking}
                     onDeclineBooking={handleDeclineBooking}
@@ -1071,6 +1196,8 @@ export default function App() {
                     onUpdateUsers={handleUpdateUsers}
                     faFixtures={faFixtures}
                     onUpdateFaFixtures={handleUpdateFaFixtures}
+                    onDeleteFaFixture={handleDeleteFaFixture}
+                    onDeleteFaFixturesBulk={handleDeleteFaFixturesBulk}
                     onClearAllBookings={handleClearAllBookings}
                   />
                 )}
@@ -1182,6 +1309,7 @@ export default function App() {
             existingBookings={bookings}
             currentUser={currentUser}
             faFixtures={faFixtures}
+            teams={teams}
           />
         )}
       </AnimatePresence>
@@ -1243,6 +1371,28 @@ export default function App() {
               handleUpdateUsers(updatedUsers);
             }}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Database Deletion / Action Toast Notification */}
+      <AnimatePresence>
+        {toastNotification && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className="fixed bottom-6 right-6 z-50 flex items-center gap-3 bg-slate-900/95 backdrop-blur text-white px-4 py-3 rounded-xl shadow-2xl border border-slate-700 text-sm font-semibold"
+          >
+            <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
+            <span className="max-w-md">{toastNotification.message}</span>
+            <button
+              onClick={() => setToastNotification(null)}
+              className="ml-2 text-slate-400 hover:text-white p-0.5 rounded cursor-pointer"
+              title="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
