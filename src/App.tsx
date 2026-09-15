@@ -315,6 +315,12 @@ export default function App() {
               teamName: u.teamName === 'Club Admin' ? undefined : u.teamName,
             };
           }
+          if (u.id === 'admin-adamh' || u.name.toLowerCase() === 'adamh') {
+            return {
+              ...u,
+              name: 'Scotter Admin',
+            };
+          }
           return u;
         });
       } catch {

@@ -76,4 +76,5 @@ export interface FAFixture {
   awayTeam: string;
   competition: string;
   scotterTeam: string;
+  manualOverride?: boolean;
 }

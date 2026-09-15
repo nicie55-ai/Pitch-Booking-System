@@ -64,6 +64,7 @@ export default function LoginModal({
         u.name.toLowerCase() === cleanUsername ||
         u.id.toLowerCase() === cleanUsername ||
         (u.id === 'admin-scotteradmin' && (cleanUsername === 'scotteradmin' || cleanUsername === 'scotter exec team')) ||
+        (u.id === 'admin-adamh' && (cleanUsername === 'adamh' || cleanUsername === 'scotter admin' || cleanUsername === 'scotteradmin')) ||
         (u.googleEmail && u.googleEmail.toLowerCase() === cleanUsername)
     );
 
