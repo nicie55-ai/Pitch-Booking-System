@@ -56,8 +56,6 @@ export interface User {
   role: 'ADMIN' | 'MANAGER';
   teamName?: string;
   password?: string;
-  googleLinked?: boolean;
-  googleEmail?: string;
 }
 
 export interface ClubTeam {

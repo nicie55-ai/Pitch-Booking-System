@@ -257,8 +257,20 @@ export function isU14GirlsTeam(teamName?: string): boolean {
 }
 
 /**
+ * Detects if a team name, fixture or notes refers to an Under 7 (U7) team.
+ */
+export function isU7Team(teamName?: string, notes?: string): boolean {
+  if (!teamName && !notes) return false;
+  const t = (teamName || '').toLowerCase();
+  const n = (notes || '').toLowerCase();
+  const u7Pattern = /\bu-?7s?\b|\bunder[\s-]*7s?\b/i;
+  return u7Pattern.test(t) || u7Pattern.test(n);
+}
+
+/**
  * Checks if there is a mutual exclusion constraint between 5v5 pitch and 11v11 pitch.
  * Rule: The 5v5 pitch cannot be used when the U14 Girls play on the 11v11 pitch.
+ * User Exception: If the U7s are on the 11v11, you do not need to show a clash with the 5v5 pitch.
  */
 export function check5v5And11v11U14GirlsConflict(
   pitchA: string,
@@ -267,13 +279,19 @@ export function check5v5And11v11U14GirlsConflict(
   teamB: string
 ): boolean {
   if (pitchA === '5v5' && pitchB === '11v11') {
+    // If the U7s are on the 11v11, do not show a clash with the 5v5 pitch
+    if (isU7Team(teamB)) return false;
     return isU14GirlsTeam(teamB);
   }
   if (pitchA === '11v11' && pitchB === '5v5') {
+    // If the U7s are on the 11v11, do not show a clash with the 5v5 pitch
+    if (isU7Team(teamA)) return false;
     return isU14GirlsTeam(teamA);
   }
   return false;
 }
+
+export const check5v5And11v11Conflict = check5v5And11v11U14GirlsConflict;
 
 /**
  * Parses time string HH:MM to total minutes from midnight.

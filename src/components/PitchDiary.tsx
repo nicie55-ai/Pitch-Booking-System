@@ -23,6 +23,7 @@ import {
   Trash2,
   MapPin,
   Archive,
+  Database,
   X
 } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, PitchConfig, User as UserType, ClubTeam } from '../types';
@@ -50,6 +51,7 @@ interface PitchDiaryProps {
   onDeleteFaFixture?: (id: string) => void;
   onDeleteFaFixturesBulk?: (fixtureIds: string[], bookingIds?: string[]) => void;
   onClearAllBookings?: () => void;
+  onClearAllFaFixtures?: () => void;
 }
 
 export default function PitchDiary({
@@ -72,6 +74,7 @@ export default function PitchDiary({
   onDeleteFaFixture,
   onDeleteFaFixturesBulk,
   onClearAllBookings,
+  onClearAllFaFixtures,
 }: PitchDiaryProps) {
   // Decline active states for specific booking IDs (to show decline text area)
   const [decliningId, setDecliningId] = useState<string | null>(null);
@@ -92,6 +95,7 @@ export default function PitchDiary({
   const [showArchived, setShowArchived] = useState<boolean>(false);
   const [teamSearchQuery, setTeamSearchQuery] = useState<string>('');
   const [selectedUnifiedIds, setSelectedUnifiedIds] = useState<string[]>([]);
+  const [confirmWipeAllFixtures, setConfirmWipeAllFixtures] = useState<boolean>(false);
 
   // Exclude legacy 3v3 format completely from visible pitch columns
   const visiblePitchConfigs = React.useMemo(() => {
@@ -158,10 +162,21 @@ export default function PitchDiary({
 
   const weekDates = getWeekDates();
 
-  // Find declined bookings for this manager
-  const declinedBookings = bookings.filter(
-    (b) => currentUser.role === 'MANAGER' && canManagerUnbook(currentUser, b) && b.status === BookingStatus.DECLINED
-  );
+  // Find declined bookings for this manager - once a slot/match is rebooked, remove it from notifications
+  const declinedBookings = bookings.filter((b) => {
+    if (currentUser.role !== 'MANAGER' || !canManagerUnbook(currentUser, b) || b.status !== BookingStatus.DECLINED) {
+      return false;
+    }
+    // Remove from notification if the manager or team has an active (approved/pending) booking for this match/date or slot
+    const isRebooked = bookings.some((other) => {
+      if (other.id === b.id) return false;
+      if (other.status === BookingStatus.DECLINED || other.status === BookingStatus.UNBOOKED) return false;
+      const sameTeamAndDate = isTeamMatch(other.teamName, b.teamName) && other.date === b.date;
+      const sameSlot = other.pitchId === b.pitchId && other.date === b.date && other.timeSlot === b.timeSlot;
+      return sameTeamAndDate || sameSlot;
+    });
+    return !isRebooked;
+  });
 
   const handlePrevWeek = () => {
     const prev = parseDateLocal(selectedDate);
@@ -520,6 +535,7 @@ export default function PitchDiary({
           faFixtures={faFixtures}
           onUpdateFaFixtures={onUpdateFaFixtures}
           onClearAllBookings={onClearAllBookings}
+          onClearAllFaFixtures={onClearAllFaFixtures}
         />
       )}
 
@@ -1230,6 +1246,51 @@ export default function PitchDiary({
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2" />
               </div>
             </div>
+
+            {/* Admin Database Fixture Status & Wipe Action */}
+            {currentUser.role === 'ADMIN' && onClearAllFaFixtures && (
+              <div className="flex items-center">
+                {confirmWipeAllFixtures ? (
+                  <div className="flex items-center space-x-2 bg-red-50 border-2 border-red-300 px-3 py-1 rounded-lg animate-in fade-in">
+                    <span className="text-xs font-extrabold text-red-800">Wipe all fixtures from database?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClearAllFaFixtures();
+                        setConfirmWipeAllFixtures(false);
+                      }}
+                      className="bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs px-2.5 py-1 rounded shadow cursor-pointer transition-colors"
+                    >
+                      Yes, Wipe All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmWipeAllFixtures(false)}
+                      className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs px-2 py-1 rounded cursor-pointer transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  faFixtures.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmWipeAllFixtures(true)}
+                      className="bg-red-50 hover:bg-red-100 border-2 border-red-200 hover:border-red-300 text-red-700 hover:text-red-900 text-xs font-extrabold py-1 px-2.5 rounded-lg flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+                      title="Delete all fixtures from the database for a clean reload"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                      <span>Wipe All Fixtures ({faFixtures.length})</span>
+                    </button>
+                  ) : (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-extrabold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      <Database className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                      Database Clean (0 Fixtures)
+                    </span>
+                  )
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1567,16 +1628,28 @@ export default function PitchDiary({
         {/* Unified Table display */}
         <div className="overflow-x-auto border border-slate-200 rounded-xl">
           {unifiedList.length === 0 ? (
-            <div className="text-center py-12 px-4 text-slate-400 bg-white font-medium text-xs space-y-2">
-              <p>No fixtures or bookings found matching the active filter criteria.</p>
+            <div className="text-center py-12 px-4 text-slate-500 bg-white font-medium text-xs space-y-3">
+              {faFixtures.length === 0 ? (
+                <>
+                  <div className="w-12 h-12 mx-auto rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 mb-2">
+                    <Database className="w-6 h-6" />
+                  </div>
+                  <p className="font-extrabold text-slate-800 text-sm">All Fixtures Deleted & Database Clean</p>
+                  <p className="text-slate-500 max-w-md mx-auto">
+                    There are currently 0 FA fixtures in the database. You are ready for a clean start to import fixtures without duplicates.
+                  </p>
+                </>
+              ) : (
+                <p>No fixtures or bookings found matching the active filter criteria.</p>
+              )}
               {!showArchived && totalArchivedCount > 0 && (
-                <div>
+                <div className="pt-1">
                   <button
                     onClick={() => setShowArchived(true)}
                     className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-blue-50 text-blue-900 hover:bg-blue-100 font-extrabold rounded-lg text-xs transition-colors cursor-pointer border border-blue-200"
                   >
                     <Archive className="w-3.5 h-3.5" />
-                    <span>View {totalArchivedCount} previous or archived fixture{totalArchivedCount !== 1 ? 's' : ''}</span>
+                    <span>View {totalArchivedCount} previous or archived booking{totalArchivedCount !== 1 ? 's' : ''}</span>
                   </button>
                 </div>
               )}

@@ -484,6 +484,7 @@ interface AdminPanelProps {
   faFixtures: FAFixture[];
   onUpdateFaFixtures: (fixtures: FAFixture[] | ((prev: FAFixture[]) => FAFixture[])) => void;
   onClearAllBookings?: () => void;
+  onClearAllFaFixtures?: () => void;
 }
 
 export default function AdminPanel({
@@ -502,6 +503,7 @@ export default function AdminPanel({
   faFixtures,
   onUpdateFaFixtures,
   onClearAllBookings,
+  onClearAllFaFixtures,
 }: AdminPanelProps) {
   const availableTeams = teams && teams.length > 0 ? teams : SCOTTER_TEAMS;
   const matchTeam = (pName: string, cLine?: string) => findBestTeamMatch(pName, cLine, availableTeams);
@@ -722,6 +724,7 @@ export default function AdminPanel({
   const [parsedSortField, setParsedSortField] = useState<'pitch' | 'date' | 'time' | 'homeTeam' | 'scotterTeam' | 'awayTeam' | null>('date');
   const [parsedSortAsc, setParsedSortAsc] = useState<boolean>(true);
   const [bulkRemapTeam, setBulkRemapTeam] = useState('');
+  const [confirmWipeFixtures, setConfirmWipeFixtures] = useState(false);
 
   // Automatically adjust pitch size when team is selected
   const handleTeamChange = (teamName: string) => {
@@ -2499,7 +2502,7 @@ export default function AdminPanel({
                           U14 Girls 11v11 & 5v5 Restriction
                         </span>
                         <span className="block text-[11px] text-slate-400">
-                          Ensure the 5v5 pitch is not used when Scotter United U14 Girls play on the 11v11 pitch.
+                          Ensure the 5v5 pitch is not used when Scotter United U14 Girls play on the 11v11 pitch (U7s on 11v11 do not clash with 5v5).
                         </span>
                       </div>
                       <input
@@ -2925,7 +2928,71 @@ export default function AdminPanel({
               className="space-y-6"
             >
               <div className="space-y-6">
-                  <div className="bg-slate-800/20 border border-slate-800/80 p-5 rounded-xl space-y-4">
+                {/* Database Clean Start & Fixture Management Bar */}
+                <div className="bg-slate-900/90 border border-slate-800 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center space-x-2">
+                      <Database className="w-4 h-4 text-emerald-400" />
+                      <h4 className="text-xs font-black text-white uppercase tracking-wider">
+                        Database Fixture Status
+                      </h4>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                        faFixtures.length > 0
+                          ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      }`}>
+                        {faFixtures.length > 0 ? `${faFixtures.length} Stored Fixtures` : 'Database Clean (0 Fixtures)'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      {faFixtures.length > 0
+                        ? 'Fixtures are currently synced in the cloud database. You can wipe all fixtures below to make a clean start.'
+                        : 'Database is completely clean of fixtures. Paste new fixtures below to import.'}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center space-x-2 flex-shrink-0">
+                    {confirmWipeFixtures ? (
+                      <div className="flex items-center space-x-2 bg-red-950/80 border border-red-800/80 p-2 rounded-lg">
+                        <span className="text-[11px] font-extrabold text-red-300">Permanently delete all fixtures?</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onClearAllFaFixtures) {
+                              onClearAllFaFixtures();
+                            }
+                            setParsedFixtures([]);
+                            setSelectedParsedIds([]);
+                            setPasteText('');
+                            setImportFeedback('All fixtures successfully deleted from database.');
+                            setConfirmWipeFixtures(false);
+                          }}
+                          className="bg-red-600 hover:bg-red-500 text-white font-extrabold text-[10px] uppercase px-2.5 py-1 rounded shadow cursor-pointer transition-colors"
+                        >
+                          Yes, Wipe Clean
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmWipeFixtures(false)}
+                          className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] uppercase px-2 py-1 rounded cursor-pointer transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmWipeFixtures(true)}
+                        className="bg-red-950/40 hover:bg-red-900/60 border border-red-800/60 text-red-300 hover:text-white text-xs font-extrabold py-2 px-3.5 rounded-lg flex items-center space-x-1.5 transition-all cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete All Fixtures From Database</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-slate-800/20 border border-slate-800/80 p-5 rounded-xl space-y-4">
                     <div>
                       <h4 className="text-xs font-extrabold text-blue-400 uppercase tracking-wider">
                         Copy & Paste Fixture List

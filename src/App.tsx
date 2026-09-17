@@ -24,6 +24,8 @@ import {
   deleteFaFixtureFromFirestore,
   deleteFaFixturesBulkFromFirestore,
   syncFaFixturesListToFirestore,
+  clearAllFaFixturesFromFirestore,
+  clearAllFaImportedBookingsFromFirestore,
   savePitchConfigsListToFirestore,
   saveSlotChangeRequestToFirestore,
   deleteSlotChangeRequestFromFirestore,
@@ -49,7 +51,7 @@ import SlotConfigurator from './components/SlotConfigurator';
 import BookingModal from './components/BookingModal';
 import CoachesSetup from './components/CoachesSetup';
 import LoginModal from './components/LoginModal';
-import { isU14GirlsTeam, parseTimeToMinutes, check5v5And11v11U14GirlsConflict, is3v3Match } from './utils/bookingUtils';
+import { isU14GirlsTeam, isU7Team, parseTimeToMinutes, check5v5And11v11U14GirlsConflict, is3v3Match } from './utils/bookingUtils';
 
 export default function App() {
   // Load initial state from LocalStorage or mock data
@@ -103,10 +105,10 @@ export default function App() {
     let currentFa = [...faFixtures];
     let faChanged = false;
 
-    // 1. Map pitch formats correctly (allowing 3v3 matches to be hosted on 9v9, 7v7, or 5v5)
+    // 1. Map pitch formats correctly (allowing 3v3 and U7 matches to be hosted on 11v11, 9v9, 7v7, or 5v5)
     currentFa = currentFa.map(f => {
-      const is3v3 = is3v3Match(f.scotterTeam || f.homeTeam, undefined, f.pitchId, f.competition);
-      if (is3v3 && ['9v9', '7v7', '5v5'].includes(f.pitchId)) {
+      const is3v3OrU7 = is3v3Match(f.scotterTeam || f.homeTeam, undefined, f.pitchId, f.competition) || isU7Team(f.scotterTeam || f.homeTeam);
+      if (is3v3OrU7 && ['11v11', '9v9', '7v7', '5v5'].includes(f.pitchId)) {
         return f;
       }
       const canonicalPitch = teamPitchMap[f.scotterTeam] || ((f.pitchId as string) === '3v3' ? '9v9' : f.pitchId);
@@ -185,10 +187,10 @@ export default function App() {
     let currentBookings = [...bookings];
     let bookingsChanged = false;
 
-    // 1. Map pitch formats correctly (allowing 3v3 matches to be hosted on 9v9, 7v7, or 5v5)
+    // 1. Map pitch formats correctly (allowing 3v3 and U7 matches to be hosted on 11v11, 9v9, 7v7, or 5v5)
     currentBookings = currentBookings.map(b => {
-      const is3v3 = is3v3Match(b.teamName, undefined, b.pitchId, b.notes);
-      if (is3v3 && ['9v9', '7v7', '5v5'].includes(b.pitchId)) {
+      const is3v3OrU7 = is3v3Match(b.teamName, undefined, b.pitchId, b.notes) || isU7Team(b.teamName, b.notes);
+      if (is3v3OrU7 && ['11v11', '9v9', '7v7', '5v5'].includes(b.pitchId)) {
         return b;
       }
       const canonicalPitch = teamPitchMap[b.teamName] || ((b.pitchId as string) === '3v3' ? '9v9' : b.pitchId);
@@ -663,6 +665,34 @@ export default function App() {
     });
   };
 
+  const handleClearAllFaFixtures = async () => {
+    try {
+      await clearAllFaFixturesFromFirestore();
+      await clearAllFaImportedBookingsFromFirestore();
+    } catch (err) {
+      console.warn('Notice while clearing Firestore fixtures:', err);
+    }
+    setFaFixtures([]);
+    localStorage.removeItem('scotter_jfc_fa_fixtures');
+    setBookings((prev) => {
+      const next = prev.filter(
+        (b) =>
+          b.managerId !== 'fa-auto-import' &&
+          !b.id.startsWith('b-pasted-import-') &&
+          !b.id.startsWith('b-pasted-') &&
+          !b.id.startsWith('b-auto-bulk-') &&
+          !b.id.includes('fa-pasted') &&
+          !b.id.includes('fa-')
+      );
+      localStorage.setItem('scotter_jfc_bookings', JSON.stringify(next));
+      return next;
+    });
+    setToastNotification({
+      type: 'success',
+      message: 'All fixtures and imported matches wiped from database. Ready for a clean reload!',
+    });
+  };
+
   // Sync state to LocalStorage as secondary cache
   useEffect(() => {
     localStorage.setItem('scotter_jfc_bookings', JSON.stringify(bookings));
@@ -827,6 +857,11 @@ export default function App() {
         saveBookingToFirestore(newBooking).catch(console.error);
       }
 
+      if (modalPrefills.bookingId && (!existingBooking || existingBooking.id !== modalPrefills.bookingId)) {
+        deleteBookingFromFirestore(modalPrefills.bookingId).catch(console.error);
+        setBookings((prev) => prev.filter((b) => b.id !== modalPrefills.bookingId));
+      }
+
       setBookingConfirmation({
         show: true,
         message:
@@ -855,6 +890,7 @@ export default function App() {
           notes: data.notes,
           teamName: data.teamName || existingB.teamName,
           status: currentUser.role === 'ADMIN' ? BookingStatus.APPROVED : BookingStatus.PENDING,
+          declineReason: undefined,
         };
         setBookings((prev) =>
           prev.map((b) => (b.id === modalPrefills.bookingId ? updatedB : b))
@@ -1220,6 +1256,7 @@ export default function App() {
                     onDeleteFaFixture={handleDeleteFaFixture}
                     onDeleteFaFixturesBulk={handleDeleteFaFixturesBulk}
                     onClearAllBookings={handleClearAllBookings}
+                    onClearAllFaFixtures={handleClearAllFaFixtures}
                   />
                 )}
 
@@ -1385,12 +1422,6 @@ export default function App() {
             onLoginSuccess={(loggedInUser) => {
               handleLogin(loggedInUser);
               setIsLoginModalOpen(false);
-            }}
-            onUpdateUserEmail={(userId, email) => {
-              const updatedUsers = users.map((u) =>
-                u.id === userId ? { ...u, googleEmail: email, googleLinked: true } : u
-              );
-              handleUpdateUsers(updatedUsers);
             }}
           />
         )}

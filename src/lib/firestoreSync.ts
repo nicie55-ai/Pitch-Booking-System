@@ -15,7 +15,7 @@ import {
   SlotChangeRequest,
   ClubTeam,
 } from '../types';
-import { FAFixture, MOCK_USERS, INITIAL_BOOKINGS, DEFAULT_PITCH_CONFIGS, INITIAL_SLOT_CHANGES, MOCK_FA_FULLTIME_FIXTURES, SCOTTER_TEAMS } from '../mockData';
+import { FAFixture, MOCK_USERS, DEFAULT_PITCH_CONFIGS, INITIAL_SLOT_CHANGES, SCOTTER_TEAMS } from '../mockData';
 
 // Helper to remove undefined fields before writing to Firestore
 function sanitizeData<T extends Record<string, any>>(obj: T): T {
@@ -26,6 +26,18 @@ function sanitizeData<T extends Record<string, any>>(obj: T): T {
     }
   });
   return cleanObj as T;
+}
+
+// Helper to execute operations in batches of at most 200 to strictly adhere to Firestore limits
+async function executeInChunks(operations: ((batch: ReturnType<typeof writeBatch>) => void)[]) {
+  if (operations.length === 0) return;
+  const CHUNK_SIZE = 200;
+  for (let i = 0; i < operations.length; i += CHUNK_SIZE) {
+    const chunk = operations.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    chunk.forEach((op) => op(batch));
+    await batch.commit();
+  }
 }
 
 // Collections names
@@ -64,6 +76,7 @@ export function subscribeToFirestoreData(callbacks: {
             batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
           });
           await batch.commit().catch(() => {});
+          callbacks.onUsersUpdate(MOCK_USERS);
         } else {
           const usersList: User[] = snapshot.docs.map((d) => d.data() as User);
           // Auto-upsert any missing default user accounts into Firestore
@@ -86,12 +99,23 @@ export function subscribeToFirestoreData(callbacks: {
 
     // 2. Bookings Subscription
     const bookingsRef = collection(db, COLLECTIONS.BOOKINGS);
-    const unsubBookings = onSnapshot(bookingsRef, (snapshot) => {
+    const unsubBookings = onSnapshot(bookingsRef, async (snapshot) => {
       try {
         if (snapshot.empty) {
+          // Check if local cache has bookings to preserve and sync UP to Firestore
+          const localSaved = localStorage.getItem('scotter_jfc_bookings');
+          if (localSaved) {
+            try {
+              const parsed: Booking[] = JSON.parse(localSaved);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                await saveBookingsBulkToFirestore(parsed).catch(() => {});
+                callbacks.onBookingsUpdate(parsed);
+                return;
+              }
+            } catch {}
+          }
           callbacks.onBookingsUpdate([]);
         } else {
-          localStorage.setItem('scotter_jfc_bookings_initialized', 'true');
           const bookingsList: Booking[] = snapshot.docs.map((d) => d.data() as Booking);
           callbacks.onBookingsUpdate(bookingsList);
         }
@@ -103,12 +127,12 @@ export function subscribeToFirestoreData(callbacks: {
 
     // 3. FA Fixtures Subscription
     const faFixturesRef = collection(db, COLLECTIONS.FA_FIXTURES);
-    const unsubFaFixtures = onSnapshot(faFixturesRef, (snapshot) => {
+    const unsubFaFixtures = onSnapshot(faFixturesRef, async (snapshot) => {
       try {
         if (snapshot.empty) {
+          localStorage.removeItem('scotter_jfc_fa_fixtures');
           callbacks.onFaFixturesUpdate([]);
         } else {
-          localStorage.setItem('scotter_jfc_fafixtures_initialized', 'true');
           const fixturesList: FAFixture[] = snapshot.docs.map((d) => d.data() as FAFixture);
           callbacks.onFaFixturesUpdate(fixturesList);
         }
@@ -128,6 +152,7 @@ export function subscribeToFirestoreData(callbacks: {
             batch.set(doc(db, COLLECTIONS.PITCH_CONFIGS, p.id), sanitizeData(p));
           });
           await batch.commit().catch(() => {});
+          callbacks.onPitchConfigsUpdate(DEFAULT_PITCH_CONFIGS);
         } else {
           const configsList: PitchConfig[] = snapshot.docs.map((d) => d.data() as PitchConfig);
           callbacks.onPitchConfigsUpdate(configsList);
@@ -148,6 +173,7 @@ export function subscribeToFirestoreData(callbacks: {
             batch.set(doc(db, COLLECTIONS.SLOT_CHANGE_REQUESTS, s.id), sanitizeData(s));
           });
           await batch.commit().catch(() => {});
+          callbacks.onSlotChangeRequestsUpdate(INITIAL_SLOT_CHANGES);
         } else {
           const requestsList: SlotChangeRequest[] = snapshot.docs.map((d) => d.data() as SlotChangeRequest);
           callbacks.onSlotChangeRequestsUpdate(requestsList);
@@ -168,6 +194,9 @@ export function subscribeToFirestoreData(callbacks: {
             batch.set(doc(db, COLLECTIONS.TEAMS, t.id), sanitizeData(t));
           });
           await batch.commit().catch(() => {});
+          if (callbacks.onTeamsUpdate) {
+            callbacks.onTeamsUpdate(SCOTTER_TEAMS);
+          }
         } else {
           const teamsList: ClubTeam[] = snapshot.docs.map((d) => d.data() as ClubTeam);
           if (callbacks.onTeamsUpdate) {
@@ -205,11 +234,10 @@ export async function saveTeamToFirestore(team: ClubTeam) {
 
 export async function saveTeamsListToFirestore(teams: ClubTeam[]) {
   try {
-    const batch = writeBatch(db);
-    teams.forEach((t) => {
+    const ops = teams.map((t) => (batch: ReturnType<typeof writeBatch>) => {
       batch.set(doc(db, COLLECTIONS.TEAMS, t.id), sanitizeData(t));
     });
-    await batch.commit();
+    await executeInChunks(ops);
   } catch (err) {
     console.warn('Failed saving teams list to Firestore (saved locally):', err);
   }
@@ -227,19 +255,19 @@ export async function syncTeamsListToFirestore(teams: ClubTeam[]) {
   try {
     const snapshot = await getDocs(collection(db, COLLECTIONS.TEAMS));
     const newIds = new Set(teams.map((t) => t.id));
-    const batch = writeBatch(db);
+    const ops: ((batch: ReturnType<typeof writeBatch>) => void)[] = [];
 
     snapshot.docs.forEach((docSnap) => {
       if (!newIds.has(docSnap.id)) {
-        batch.delete(docSnap.ref);
+        ops.push((batch) => batch.delete(docSnap.ref));
       }
     });
 
     teams.forEach((t) => {
-      batch.set(doc(db, COLLECTIONS.TEAMS, t.id), sanitizeData(t));
+      ops.push((batch) => batch.set(doc(db, COLLECTIONS.TEAMS, t.id), sanitizeData(t)));
     });
 
-    await batch.commit();
+    await executeInChunks(ops);
   } catch (err) {
     console.warn('Failed syncing teams to Firestore (cached locally):', err);
   }
@@ -256,11 +284,10 @@ export async function saveUserToFirestore(user: User) {
 
 export async function saveUsersListToFirestore(users: User[]) {
   try {
-    const batch = writeBatch(db);
-    users.forEach((u) => {
+    const ops = users.map((u) => (batch: ReturnType<typeof writeBatch>) => {
       batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
     });
-    await batch.commit();
+    await executeInChunks(ops);
   } catch (err) {
     console.warn('Failed saving users list to Firestore (saved locally):', err);
   }
@@ -270,19 +297,19 @@ export async function syncUsersListToFirestore(users: User[]) {
   try {
     const snapshot = await getDocs(collection(db, COLLECTIONS.USERS));
     const newIds = new Set(users.map((u) => u.id));
-    const batch = writeBatch(db);
+    const ops: ((batch: ReturnType<typeof writeBatch>) => void)[] = [];
 
     snapshot.docs.forEach((docSnap) => {
       if (!newIds.has(docSnap.id)) {
-        batch.delete(docSnap.ref);
+        ops.push((batch) => batch.delete(docSnap.ref));
       }
     });
 
     users.forEach((u) => {
-      batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u));
+      ops.push((batch) => batch.set(doc(db, COLLECTIONS.USERS, u.id), sanitizeData(u)));
     });
 
-    await batch.commit();
+    await executeInChunks(ops);
   } catch (err) {
     console.warn('Failed syncing users to Firestore (cached locally):', err);
   }
@@ -307,11 +334,10 @@ export async function saveBookingToFirestore(booking: Booking) {
 
 export async function saveBookingsBulkToFirestore(bookings: Booking[]) {
   try {
-    const batch = writeBatch(db);
-    bookings.forEach((b) => {
+    const ops = bookings.map((b) => (batch: ReturnType<typeof writeBatch>) => {
       batch.set(doc(db, COLLECTIONS.BOOKINGS, b.id), sanitizeData(b));
     });
-    await batch.commit();
+    await executeInChunks(ops);
   } catch (err) {
     console.warn('Failed saving bulk bookings to Firestore (saved locally):', err);
   }
@@ -328,11 +354,10 @@ export async function deleteBookingFromFirestore(bookingId: string) {
 export async function deleteBookingsBulkFromFirestore(bookingIds: string[]) {
   if (!bookingIds || bookingIds.length === 0) return;
   try {
-    const batch = writeBatch(db);
-    bookingIds.forEach((id) => {
+    const ops = bookingIds.map((id) => (batch: ReturnType<typeof writeBatch>) => {
       batch.delete(doc(db, COLLECTIONS.BOOKINGS, id));
     });
-    await batch.commit();
+    await executeInChunks(ops);
   } catch (err) {
     console.warn('Failed bulk deleting bookings from Firestore:', err);
   }
@@ -342,19 +367,19 @@ export async function syncBookingsListToFirestore(bookings: Booking[]) {
   try {
     const snapshot = await getDocs(collection(db, COLLECTIONS.BOOKINGS));
     const newIds = new Set(bookings.map((b) => b.id));
-    const batch = writeBatch(db);
+    const ops: ((batch: ReturnType<typeof writeBatch>) => void)[] = [];
 
     snapshot.docs.forEach((docSnap) => {
       if (!newIds.has(docSnap.id)) {
-        batch.delete(docSnap.ref);
+        ops.push((batch) => batch.delete(docSnap.ref));
       }
     });
 
     bookings.forEach((b) => {
-      batch.set(doc(db, COLLECTIONS.BOOKINGS, b.id), sanitizeData(b));
+      ops.push((batch) => batch.set(doc(db, COLLECTIONS.BOOKINGS, b.id), sanitizeData(b)));
     });
 
-    await batch.commit();
+    await executeInChunks(ops);
   } catch (err) {
     console.warn('Failed syncing bookings to Firestore (cached locally):', err);
   }
@@ -371,11 +396,10 @@ export async function saveFaFixtureToFirestore(fixture: FAFixture) {
 
 export async function saveFaFixturesBulkToFirestore(fixtures: FAFixture[]) {
   try {
-    const batch = writeBatch(db);
-    fixtures.forEach((f) => {
+    const ops = fixtures.map((f) => (batch: ReturnType<typeof writeBatch>) => {
       batch.set(doc(db, COLLECTIONS.FA_FIXTURES, f.id), sanitizeData(f));
     });
-    await batch.commit();
+    await executeInChunks(ops);
   } catch (err) {
     console.warn('Failed bulk saving FA fixtures to Firestore (saved locally):', err);
   }
@@ -392,11 +416,10 @@ export async function deleteFaFixtureFromFirestore(fixtureId: string) {
 export async function deleteFaFixturesBulkFromFirestore(fixtureIds: string[]) {
   if (!fixtureIds || fixtureIds.length === 0) return;
   try {
-    const batch = writeBatch(db);
-    fixtureIds.forEach((id) => {
+    const ops = fixtureIds.map((id) => (batch: ReturnType<typeof writeBatch>) => {
       batch.delete(doc(db, COLLECTIONS.FA_FIXTURES, id));
     });
-    await batch.commit();
+    await executeInChunks(ops);
   } catch (err) {
     console.warn('Failed bulk deleting FA fixtures from Firestore:', err);
   }
@@ -404,24 +427,59 @@ export async function deleteFaFixturesBulkFromFirestore(fixtureIds: string[]) {
 
 export async function syncFaFixturesListToFirestore(fixtures: FAFixture[]) {
   try {
-    // First get existing docs to delete any removed
     const snapshot = await getDocs(collection(db, COLLECTIONS.FA_FIXTURES));
     const newIds = new Set(fixtures.map((f) => f.id));
-    const batch = writeBatch(db);
+    const ops: ((batch: ReturnType<typeof writeBatch>) => void)[] = [];
 
     snapshot.docs.forEach((docSnap) => {
       if (!newIds.has(docSnap.id)) {
-        batch.delete(docSnap.ref);
+        ops.push((batch) => batch.delete(docSnap.ref));
       }
     });
 
     fixtures.forEach((f) => {
-      batch.set(doc(db, COLLECTIONS.FA_FIXTURES, f.id), sanitizeData(f));
+      ops.push((batch) => batch.set(doc(db, COLLECTIONS.FA_FIXTURES, f.id), sanitizeData(f)));
     });
 
-    await batch.commit();
+    await executeInChunks(ops);
   } catch (err) {
     console.warn('Failed syncing FA fixtures to Firestore (cached locally):', err);
+  }
+}
+
+export async function clearAllFaFixturesFromFirestore() {
+  try {
+    const snapshot = await getDocs(collection(db, COLLECTIONS.FA_FIXTURES));
+    const ops = snapshot.docs.map((docSnap) => (batch: ReturnType<typeof writeBatch>) => {
+      batch.delete(docSnap.ref);
+    });
+    await executeInChunks(ops);
+    localStorage.removeItem('scotter_jfc_fa_fixtures');
+  } catch (err) {
+    console.warn('Failed clearing all FA fixtures from Firestore:', err);
+  }
+}
+
+export async function clearAllFaImportedBookingsFromFirestore() {
+  try {
+    const snapshot = await getDocs(collection(db, COLLECTIONS.BOOKINGS));
+    const faBookings = snapshot.docs.filter((d) => {
+      const data = d.data() as Booking;
+      return (
+        data.managerId === 'fa-auto-import' ||
+        d.id.startsWith('b-pasted-import-') ||
+        d.id.startsWith('b-pasted-') ||
+        d.id.startsWith('b-auto-bulk-') ||
+        d.id.includes('fa-pasted') ||
+        d.id.includes('fa-')
+      );
+    });
+    const ops = faBookings.map((docSnap) => (batch: ReturnType<typeof writeBatch>) => {
+      batch.delete(docSnap.ref);
+    });
+    await executeInChunks(ops);
+  } catch (err) {
+    console.warn('Failed clearing FA imported bookings from Firestore:', err);
   }
 }
 
@@ -436,11 +494,10 @@ export async function savePitchConfigToFirestore(config: PitchConfig) {
 
 export async function savePitchConfigsListToFirestore(configs: PitchConfig[]) {
   try {
-    const batch = writeBatch(db);
-    configs.forEach((c) => {
+    const ops = configs.map((c) => (batch: ReturnType<typeof writeBatch>) => {
       batch.set(doc(db, COLLECTIONS.PITCH_CONFIGS, c.id), sanitizeData(c));
     });
-    await batch.commit();
+    await executeInChunks(ops);
   } catch (err) {
     console.warn('Failed saving pitch configs to Firestore (saved locally):', err);
   }

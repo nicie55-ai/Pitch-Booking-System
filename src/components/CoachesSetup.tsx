@@ -87,9 +87,6 @@ export default function CoachesSetup({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Google SSO simulated state
-  const [isLinkingGoogle, setIsLinkingGoogle] = useState(false);
-
   // Add team handler
   const handleCreateTeam = (e: React.FormEvent) => {
     e.preventDefault();
@@ -330,33 +327,6 @@ export default function CoachesSetup({
     setSuccess('Coach profile updated successfully!');
     setEditingUserId(null);
     setEditPassword('');
-  };
-
-  // Simulated Google SSO linkage
-  const handleToggleGoogleSSO = () => {
-    setError(null);
-    setSuccess(null);
-    setIsLinkingGoogle(true);
-
-    setTimeout(() => {
-      setIsLinkingGoogle(false);
-      const isLinked = currentUser.googleLinked;
-      
-      const updatedUser = {
-        ...currentUser,
-        googleLinked: !isLinked,
-        googleEmail: !isLinked ? 'nicie55@hotmail.com' : undefined,
-      };
-
-      onUpdateCurrentUser(updatedUser);
-      onUpdateUsers(users.map((u) => u.id === currentUser.id ? updatedUser : u));
-
-      if (!isLinked) {
-        setSuccess('Successfully connected to Google SSO! You can now log in securely with nicie55@hotmail.com.');
-      } else {
-        setSuccess('Disconnected Google SSO linkage.');
-      }
-    }, 1000);
   };
 
   return (
@@ -934,70 +904,9 @@ export default function CoachesSetup({
           </div>
         </div>
 
-        {/* Right Column: Google SSO & Directory */}
+        {/* Right Column: Coach Directory */}
         <div className="space-y-8">
           
-          {/* Google SSO Box */}
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
-            <div>
-              <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-blue-900 animate-pulse" />
-                <span>Google Single Sign-On (SSO)</span>
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">Authenticate instantly and securely using Google Accounts, fully compatible with club workspace credentials.</p>
-            </div>
-
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/60 space-y-3">
-              {currentUser.googleLinked ? (
-                <div className="space-y-3">
-                  <div className="flex items-center space-x-2 text-emerald-800">
-                    <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                    <span className="text-xs font-bold font-sans">SSO Linked with Google</span>
-                  </div>
-                  <div className="text-xs bg-white p-3 rounded-lg border border-slate-150 space-y-1">
-                    <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wide">Linked Email Address</p>
-                    <p className="font-mono text-slate-800 font-bold break-all">{currentUser.googleEmail || 'nicie55@hotmail.com'}</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2 text-slate-500 font-medium text-xs leading-relaxed">
-                  <p>Enhance security and bypass password entry! Link your coach account with a single click.</p>
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={handleToggleGoogleSSO}
-                disabled={isLinkingGoogle}
-                className={`w-full py-2.5 px-4 rounded-xl text-xs font-extrabold transition-all duration-150 flex items-center justify-center space-x-2 shadow-sm uppercase tracking-wider ${
-                  currentUser.googleLinked 
-                    ? 'bg-red-50 hover:bg-red-100/80 text-red-700 border border-red-200' 
-                    : 'bg-blue-900 hover:bg-blue-800 text-white'
-                } disabled:opacity-50`}
-              >
-                {isLinkingGoogle ? (
-                  <span>Syncing SSO...</span>
-                ) : currentUser.googleLinked ? (
-                  <span>Disconnect Google</span>
-                ) : (
-                  <>
-                    {/* Simple inline Google colored icon (G) */}
-                    <span className="font-sans font-black bg-white text-slate-800 rounded px-1.5 mr-0.5 text-[10px]">G</span>
-                    <span>Link Google Account</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Google SSO Notice */}
-            <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-xl flex items-start gap-2">
-              <Info className="w-4 h-4 text-blue-900 mt-0.5 flex-shrink-0" />
-              <div className="text-[10px] text-blue-950 font-medium leading-relaxed">
-                <p>Google SSO authentication is integrated on our platform via Firebase Auth secure federation. To enable full production domain SSO, admins can connect Firebase credentials in workspace settings.</p>
-              </div>
-            </div>
-          </div>
-
           {/* Coach Directory / User List with Inline Editing */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
             <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">
@@ -1136,11 +1045,6 @@ export default function CoachesSetup({
                         <Lock className="w-2.5 h-2.5 text-slate-300" />
                         <span>Password: Secured & Masked</span>
                       </p>
-                      {u.googleLinked && (
-                        <span className="inline-flex items-center text-[8px] font-black text-blue-800 bg-blue-50 border border-blue-150 px-1 py-0.5 rounded mt-1 uppercase tracking-wider leading-none">
-                          Google SSO Active
-                        </span>
-                      )}
                     </div>
 
                     {/* Actions */}

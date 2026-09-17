@@ -329,14 +329,12 @@ export default function BookingModal({
     const firstSlot = tempSlotsAvailable[0] || '';
     
     if (!isCustomTime) {
-      setTimeSlot(firstSlot);
-      setEndTime(getEndTimeForSlot(selected, date, firstSlot));
-    }
-
-    // Auto-update default team to fit this pitch size
-    const matchingTeam = SCOTTER_TEAMS.find((t) => t.pitchSize === selected);
-    if (matchingTeam) {
-      setAdminSelectedTeam(matchingTeam.name);
+      if (!timeSlot || !tempSlotsAvailable.includes(timeSlot)) {
+        setTimeSlot(firstSlot);
+        setEndTime(getEndTimeForSlot(selected, date, firstSlot));
+      } else {
+        setEndTime(getEndTimeForSlot(selected, date, timeSlot));
+      }
     }
   };
 
