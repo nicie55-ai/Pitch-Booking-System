@@ -50,6 +50,33 @@ const COLLECTIONS = {
   TEAMS: 'teams',
 };
 
+// Helper to identify and purge legacy dummy mock data that was previously seeded
+export function isLegacyMockBooking(b: any): boolean {
+  if (!b) return true;
+  if (b.id === 'b-1' || b.id === 'b-2' || b.id === 'b-3' || b.id === 'b-4') return true;
+  if (['Paul Scholes', 'Steven Gerrard', 'Wayne Rooney', 'David Beckham'].includes(b.managerName)) return true;
+  if (['manager-u9', 'manager-u11', 'manager-u15', 'manager-u7'].includes(b.managerId)) return true;
+  if (b.notes && (
+    b.notes.includes('League fixture vs Messingham JFC') ||
+    b.notes.includes('County Cup Quarter Final') ||
+    b.notes.includes('Pre-season friendly against Gainsborough Trinity') ||
+    b.notes.includes('Early training friendly tournament with visiting club')
+  )) return true;
+  return false;
+}
+
+export function isLegacyMockFixture(f: any): boolean {
+  if (!f) return true;
+  if (typeof f.id === 'string' && f.id.startsWith('fa-ps-')) return true;
+  return false;
+}
+
+export function isLegacyMockSlotChange(s: any): boolean {
+  if (!s) return true;
+  if (s.id === 'sc-1' || s.managerName === 'Steven Gerrard' || s.managerId === 'manager-u11') return true;
+  return false;
+}
+
 /**
  * Initialize real-time listeners for all Firestore collections.
  * Automatically seeds default initial data if Firestore collections are empty.
@@ -102,21 +129,25 @@ export function subscribeToFirestoreData(callbacks: {
     const unsubBookings = onSnapshot(bookingsRef, async (snapshot) => {
       try {
         if (snapshot.empty) {
-          // Check if local cache has bookings to preserve and sync UP to Firestore
-          const localSaved = localStorage.getItem('scotter_jfc_bookings');
-          if (localSaved) {
-            try {
-              const parsed: Booking[] = JSON.parse(localSaved);
-              if (Array.isArray(parsed) && parsed.length > 0) {
-                await saveBookingsBulkToFirestore(parsed).catch(() => {});
-                callbacks.onBookingsUpdate(parsed);
-                return;
-              }
-            } catch {}
-          }
           callbacks.onBookingsUpdate([]);
         } else {
-          const bookingsList: Booking[] = snapshot.docs.map((d) => d.data() as Booking);
+          const allDocs = snapshot.docs;
+          const bookingsList: Booking[] = [];
+          const legacyIdsToDelete: string[] = [];
+
+          allDocs.forEach((d) => {
+            const b = d.data() as Booking;
+            if (isLegacyMockBooking(b) || ['b-1', 'b-2', 'b-3', 'b-4'].includes(d.id)) {
+              legacyIdsToDelete.push(d.id);
+            } else {
+              bookingsList.push(b);
+            }
+          });
+
+          if (legacyIdsToDelete.length > 0) {
+            deleteBookingsBulkFromFirestore(legacyIdsToDelete).catch(() => {});
+          }
+
           callbacks.onBookingsUpdate(bookingsList);
         }
       } catch (err) {
@@ -133,7 +164,23 @@ export function subscribeToFirestoreData(callbacks: {
           localStorage.removeItem('scotter_jfc_fa_fixtures');
           callbacks.onFaFixturesUpdate([]);
         } else {
-          const fixturesList: FAFixture[] = snapshot.docs.map((d) => d.data() as FAFixture);
+          const allDocs = snapshot.docs;
+          const fixturesList: FAFixture[] = [];
+          const legacyFixtureIdsToDelete: string[] = [];
+
+          allDocs.forEach((d) => {
+            const f = d.data() as FAFixture;
+            if (isLegacyMockFixture(f) || d.id.startsWith('fa-ps-')) {
+              legacyFixtureIdsToDelete.push(d.id);
+            } else {
+              fixturesList.push(f);
+            }
+          });
+
+          if (legacyFixtureIdsToDelete.length > 0) {
+            deleteFaFixturesBulkFromFirestore(legacyFixtureIdsToDelete).catch(() => {});
+          }
+
           callbacks.onFaFixturesUpdate(fixturesList);
         }
       } catch (err) {
@@ -168,14 +215,27 @@ export function subscribeToFirestoreData(callbacks: {
     const unsubSlotChanges = onSnapshot(slotChangesRef, async (snapshot) => {
       try {
         if (snapshot.empty) {
-          const batch = writeBatch(db);
-          INITIAL_SLOT_CHANGES.forEach((s) => {
-            batch.set(doc(db, COLLECTIONS.SLOT_CHANGE_REQUESTS, s.id), sanitizeData(s));
-          });
-          await batch.commit().catch(() => {});
-          callbacks.onSlotChangeRequestsUpdate(INITIAL_SLOT_CHANGES);
+          callbacks.onSlotChangeRequestsUpdate([]);
         } else {
-          const requestsList: SlotChangeRequest[] = snapshot.docs.map((d) => d.data() as SlotChangeRequest);
+          const allDocs = snapshot.docs;
+          const requestsList: SlotChangeRequest[] = [];
+          const legacySlotIdsToDelete: string[] = [];
+
+          allDocs.forEach((d) => {
+            const s = d.data() as SlotChangeRequest;
+            if (isLegacyMockSlotChange(s) || d.id === 'sc-1') {
+              legacySlotIdsToDelete.push(d.id);
+            } else {
+              requestsList.push(s);
+            }
+          });
+
+          if (legacySlotIdsToDelete.length > 0) {
+            legacySlotIdsToDelete.forEach((id) => {
+              deleteSlotChangeRequestFromFirestore(id).catch(() => {});
+            });
+          }
+
           callbacks.onSlotChangeRequestsUpdate(requestsList);
         }
       } catch (err) {

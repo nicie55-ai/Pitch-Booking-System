@@ -29,7 +29,7 @@ import {
 import { PitchSize, Booking, BookingStatus, PitchConfig, User as UserType, ClubTeam } from '../types';
 import AdminPanel from './AdminPanel';
 import { canManagerUnbook, isTeamMatch, parseDateLocal, formatDateLocal, formatDateUK, check5v5And11v11U14GirlsConflict, is3v3Match } from '../utils/bookingUtils';
-import { MOCK_FA_FULLTIME_FIXTURES, FAFixture } from '../mockData';
+import { FAFixture } from '../types';
 
 interface PitchDiaryProps {
   selectedDate: string;

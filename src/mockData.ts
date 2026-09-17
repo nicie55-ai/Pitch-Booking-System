@@ -192,73 +192,10 @@ export const DEFAULT_PITCH_CONFIGS: PitchConfig[] = [
   },
 ];
 
-// Initial bookings set prior to 12 September 2026 (5th and 6th September 2026)
-const RAW_INITIAL_BOOKINGS: Booking[] = [
-  {
-    id: 'b-1',
-    pitchId: '7v7',
-    date: '2026-09-05',
-    timeSlot: '09:30',
-    teamName: 'Scotter United U9s',
-    managerName: 'Paul Scholes',
-    managerId: 'manager-u9',
-    notes: 'League fixture vs Messingham JFC. Ref has been confirmed.',
-    status: BookingStatus.APPROVED,
-    createdAt: '2026-09-01T10:00:00Z',
-  },
-  {
-    id: 'b-2',
-    pitchId: '9v9',
-    date: '2026-09-05',
-    timeSlot: '10:45',
-    teamName: 'Scotter United U11s',
-    managerName: 'Steven Gerrard',
-    managerId: 'manager-u11',
-    notes: 'County Cup Quarter Final. Expecting higher attendance, extra pitch lines marked if possible.',
-    status: BookingStatus.PENDING,
-    createdAt: '2026-09-02T08:30:00Z',
-  },
-  {
-    id: 'b-3',
-    pitchId: '11v11',
-    date: '2026-09-06',
-    timeSlot: '12:00',
-    teamName: 'Scotter United U15s',
-    managerName: 'Wayne Rooney',
-    managerId: 'manager-u15',
-    notes: 'Pre-season friendly against Gainsborough Trinity. Nets are required.',
-    status: BookingStatus.APPROVED,
-    createdAt: '2026-09-01T14:15:00Z',
-  },
-  {
-    id: 'b-4',
-    pitchId: '5v5',
-    date: '2026-09-05',
-    timeSlot: '09:30',
-    teamName: 'Scotter United U7 Juniors',
-    managerName: 'David Beckham',
-    managerId: 'manager-u7',
-    notes: 'Early training friendly tournament with visiting club.',
-    status: BookingStatus.DECLINED,
-    declineReason: 'Pitch is reserved for Under 8s development league matches this morning.',
-    createdAt: '2026-09-02T09:15:00Z',
-  },
-];
+// Initial bookings: only fixtures/bookings created or imported by the user are used
+const RAW_INITIAL_BOOKINGS: Booking[] = [];
 
-const RAW_INITIAL_SLOT_CHANGES: SlotChangeRequest[] = [
-  {
-    id: 'sc-1',
-    managerId: 'manager-u11',
-    managerName: 'Steven Gerrard',
-    teamName: 'Scotter United U11s',
-    pitchId: '9v9',
-    actionType: 'ADD',
-    targetSlot: '13:15',
-    notes: 'We have an extra game requested by the league, would love a 13:15 slot to be made available for 9v9 on Saturdays.',
-    status: 'PENDING',
-    createdAt: '2026-06-25T09:30:00Z',
-  },
-];
+const RAW_INITIAL_SLOT_CHANGES: SlotChangeRequest[] = [];
 
 const RAW_SCOTTER_TEAMS: Omit<ClubTeam, 'id'>[] = [
   // U7s - planned on 5v5 (or 7v7 / 9v9)

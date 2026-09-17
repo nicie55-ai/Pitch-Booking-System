@@ -36,7 +36,7 @@ import {
   Lock
 } from 'lucide-react';
 import { PitchSize, Booking, BookingStatus, PitchConfig, User, ClubTeam } from '../types';
-import { SCOTTER_TEAMS, MOCK_FA_FULLTIME_FIXTURES, FAFixture } from '../mockData';
+import { SCOTTER_TEAMS, FAFixture } from '../mockData';
 import { canManagerUnbook, isTeamMatch, normalizeTeamName, sortTeamsByAge, sortUsersByTeamAge, parseDateLocal, formatDateLocal, formatDateUK, formatUKDateNumeric, parseUKDateToISO, check5v5And11v11U14GirlsConflict, isU14GirlsTeam, is3v3Match } from '../utils/bookingUtils';
 
 // --- Top-Level Stateless Helpers (Hoisted and safe from Temporal Dead Zone) ---
@@ -451,8 +451,12 @@ function isNameMismatch(fixture: FAFixture) {
   return original !== mapped;
 }
 
-export function isScotterHomeFixture(f: { homeTeam: string; scotterTeam?: string; awayTeam?: string }, customTeams: ClubTeam[] = SCOTTER_TEAMS): boolean {
+export function isScotterHomeFixture(
+  f: { homeTeam: string; scotterTeam?: string; awayTeam?: string },
+  customTeams?: ClubTeam[]
+): boolean {
   if (!f) return false;
+  const teamsList = Array.isArray(customTeams) && customTeams.length > 0 ? customTeams : SCOTTER_TEAMS;
   const h = (f.homeTeam || '').toLowerCase();
   const s = (f.scotterTeam || '').toLowerCase();
   const a = (f.awayTeam || '').toLowerCase();
@@ -461,8 +465,8 @@ export function isScotterHomeFixture(f: { homeTeam: string; scotterTeam?: string
   if (a.includes('scotter')) return false;
   if (s.includes('scotter')) return true;
   if (f.homeTeam && f.scotterTeam && f.homeTeam === f.scotterTeam) return true;
-  if (customTeams.some((t) => t.name.toLowerCase() === h)) return true;
-  if (customTeams.some((t) => t.name.toLowerCase() === s)) {
+  if (teamsList.some((t) => t && t.name && t.name.toLowerCase() === h)) return true;
+  if (teamsList.some((t) => t && t.name && t.name.toLowerCase() === s)) {
     return true;
   }
   return false;
@@ -1097,7 +1101,7 @@ export default function AdminPanel({
     // 2. Group fixtures by match date
     const datesGroup: Record<string, FAFixture[]> = {};
     fixtures.forEach((f) => {
-      if (isScotterHomeFixture(f)) {
+      if (isHomeFixture(f)) {
         if (!datesGroup[f.date]) datesGroup[f.date] = [];
         datesGroup[f.date].push(f);
       }
@@ -1413,7 +1417,7 @@ export default function AdminPanel({
     });
 
     return fixtures.map((f) => {
-      if (isScotterHomeFixture(f) && assignedSlots.has(f.id)) {
+      if (isHomeFixture(f) && assignedSlots.has(f.id)) {
         return {
           ...f,
           timeSlot: assignedSlots.get(f.id)!,
@@ -1430,20 +1434,9 @@ export default function AdminPanel({
       return;
     }
 
-    // 1. Check if pasteText is an FA Full-Time URL or contains FA Full-Time link parameters
-    if (pasteText.includes('fulltime.thefa.com') || pasteText.includes('selectedSeason=') || pasteText.includes('selectedTeam=')) {
-      const seasonMatch = pasteText.match(/selectedSeason=([^&]+)/);
-      const teamMatch = pasteText.match(/selectedTeam=([^&]+)/);
-      const seasonId = seasonMatch ? seasonMatch[1] : '665967722';
-      const teamId = teamMatch ? teamMatch[1] : '886514411';
-
-      // Load all released FA Full-Time fixtures with any existing kick-off times ignored
-      const officialFixtures = MOCK_FA_FULLTIME_FIXTURES.map(f => ({ ...f, timeSlot: '' }));
-      const optimized = optimizeFixturesSlots(officialFixtures, true);
-      setParsedFixtures(optimized);
-      const homeFixtureIds = optimized.filter(isHomeFixture).map((p) => p.id);
-      setSelectedParsedIds(homeFixtureIds);
-      setImportFeedback(`FA Full-Time Link Loaded! Synced ${optimized.length} released fixtures for Season #${seasonId} (Team #${teamId}) with fair prebookable kick-off times. ${homeFixtureIds.length} home matches selected.`);
+    // 1. Check if pasteText is only an FA Full-Time URL without copied fixture text
+    if ((pasteText.startsWith('http://') || pasteText.startsWith('https://') || pasteText.includes('fulltime.thefa.com')) && !pasteText.includes('\t') && !pasteText.includes(' vs ') && !pasteText.includes(' v ')) {
+      setImportFeedback('To import fixtures from FA Full-Time: Please visit the FA Full-Time fixtures page for your team, highlight/select the fixture table rows, copy them (Ctrl+C), and paste them here. Then click Process Pasted Fixtures.');
       return;
     }
 
@@ -1779,7 +1772,7 @@ export default function AdminPanel({
     setParsedFixtures((current) => {
       const updatedFixture = current.find(f => f.id === id);
       if (updatedFixture) {
-        const isHome = isScotterHomeFixture(updatedFixture);
+        const isHome = isHomeFixture(updatedFixture);
         setSelectedParsedIds((prev) => {
           if (isHome) {
             return prev.includes(id) ? prev : [...prev, id];
@@ -1801,8 +1794,8 @@ export default function AdminPanel({
     }
 
     // Don't schedule a match on a slot if it looks like an away game
-    const homeMatchesToBook = selectedToBook.filter(isScotterHomeFixture);
-    const awayMatchesSkipped = selectedToBook.filter((f) => !isScotterHomeFixture(f));
+    const homeMatchesToBook = selectedToBook.filter((f) => isHomeFixture(f));
+    const awayMatchesSkipped = selectedToBook.filter((f) => !isHomeFixture(f));
 
     if (homeMatchesToBook.length === 0) {
       setImportFeedback('Info: No home matches selected to book into the Pitch Diary.');
@@ -2000,7 +1993,7 @@ export default function AdminPanel({
   };
 
   const toggleSelectAllHome = () => {
-    const homeFixtures = parsedFixtures.filter(isScotterHomeFixture);
+    const homeFixtures = parsedFixtures.filter((f) => isHomeFixture(f));
     const allHomeSelected = homeFixtures.length > 0 && homeFixtures.every(f => selectedParsedIds.includes(f.id));
     if (allHomeSelected) {
       const homeIds = homeFixtures.map(f => f.id);
@@ -3047,8 +3040,8 @@ Scotter U11s   Gainsborough Trinity   27/06/2026 11:15
 
                   {/* Parsed List Table and Remapper */}
                   {parsedFixtures.length > 0 && (() => {
-                    const homeParsedFixtures = parsedFixtures.filter(isScotterHomeFixture);
-                    const awayParsedFixtures = parsedFixtures.filter(f => !isScotterHomeFixture(f));
+                    const homeParsedFixtures = parsedFixtures.filter((f) => isHomeFixture(f));
+                    const awayParsedFixtures = parsedFixtures.filter((f) => !isHomeFixture(f));
                     
                     const getPitchWeight = (pitch: string) => {
                       if (pitch === '5v5') return 5;

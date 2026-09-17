@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Calendar, ClipboardList, Settings, Shield, User, HelpCircle, CheckCircle, Info, X } from 'lucide-react';
 
 import { Booking, BookingStatus, PitchConfig, PitchSize, SlotChangeRequest, User as UserType, ClubTeam } from './types';
-import { DEFAULT_PITCH_CONFIGS, INITIAL_BOOKINGS, INITIAL_SLOT_CHANGES, MOCK_USERS, MOCK_FA_FULLTIME_FIXTURES, FAFixture, SCOTTER_TEAMS } from './mockData';
+import { DEFAULT_PITCH_CONFIGS, INITIAL_BOOKINGS, INITIAL_SLOT_CHANGES, MOCK_USERS, FAFixture, SCOTTER_TEAMS } from './mockData';
 import {
   subscribeToFirestoreData,
   saveUserToFirestore,
@@ -31,6 +31,9 @@ import {
   deleteSlotChangeRequestFromFirestore,
   saveTeamsListToFirestore,
   syncTeamsListToFirestore,
+  isLegacyMockBooking,
+  isLegacyMockFixture,
+  isLegacyMockSlotChange,
 } from './lib/firestoreSync';
 
 export const PITCH_ORDER: Record<string, number> = {
@@ -54,14 +57,25 @@ import LoginModal from './components/LoginModal';
 import { isU14GirlsTeam, isU7Team, parseTimeToMinutes, check5v5And11v11U14GirlsConflict, is3v3Match } from './utils/bookingUtils';
 
 export default function App() {
-  // Load initial state from LocalStorage or mock data
+  // Load initial state from LocalStorage or empty array
   const [bookings, setBookings] = useState<Booking[]>(() => {
     const saved = localStorage.getItem('scotter_jfc_bookings');
-    const parsed: Booking[] = saved ? JSON.parse(saved) : INITIAL_BOOKINGS;
-    return parsed.map(b => ({
-      ...b,
-      teamName: b.teamName ? b.teamName.replace('Scotter United ', '') : '',
-    }));
+    if (saved) {
+      try {
+        const parsed: Booking[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed
+            .filter((b) => !isLegacyMockBooking(b))
+            .map((b) => ({
+              ...b,
+              teamName: b.teamName ? b.teamName.replace('Scotter United ', '') : '',
+            }));
+          localStorage.setItem('scotter_jfc_bookings', JSON.stringify(cleaned));
+          return cleaned;
+        }
+      } catch {}
+    }
+    return [];
   });
 
   const [toastNotification, setToastNotification] = useState<{ message: string; type?: 'success' | 'info' } | null>(null);
@@ -79,7 +93,9 @@ export default function App() {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed;
+          const cleaned = parsed.filter((f) => !isLegacyMockFixture(f));
+          localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(cleaned));
+          return cleaned;
         }
       } catch (err) {
         console.warn('Error parsing cached fa fixtures:', err);
@@ -296,11 +312,22 @@ export default function App() {
 
   const [slotChangeRequests, setSlotChangeRequests] = useState<SlotChangeRequest[]>(() => {
     const saved = localStorage.getItem('scotter_jfc_slot_changes');
-    const parsed: SlotChangeRequest[] = saved ? JSON.parse(saved) : INITIAL_SLOT_CHANGES;
-    return parsed.map(sc => ({
-      ...sc,
-      teamName: sc.teamName ? sc.teamName.replace('Scotter United ', '') : '',
-    }));
+    if (saved) {
+      try {
+        const parsed: SlotChangeRequest[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed
+            .filter((sc) => !isLegacyMockSlotChange(sc))
+            .map((sc) => ({
+              ...sc,
+              teamName: sc.teamName ? sc.teamName.replace('Scotter United ', '') : '',
+            }));
+          localStorage.setItem('scotter_jfc_slot_changes', JSON.stringify(cleaned));
+          return cleaned;
+        }
+      } catch {}
+    }
+    return [];
   });
 
   const [users, setUsers] = useState<UserType[]>(() => {
