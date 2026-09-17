@@ -26,6 +26,7 @@ import {
   syncFaFixturesListToFirestore,
   clearAllFaFixturesFromFirestore,
   clearAllFaImportedBookingsFromFirestore,
+  clearAllBookingsFromFirestore,
   savePitchConfigsListToFirestore,
   saveSlotChangeRequestToFirestore,
   deleteSlotChangeRequestFromFirestore,
@@ -57,26 +58,10 @@ import LoginModal from './components/LoginModal';
 import { isU14GirlsTeam, isU7Team, parseTimeToMinutes, check5v5And11v11U14GirlsConflict, is3v3Match } from './utils/bookingUtils';
 
 export default function App() {
-  // Load initial state from LocalStorage or empty array
-  const [bookings, setBookings] = useState<Booking[]>(() => {
-    const saved = localStorage.getItem('scotter_jfc_bookings');
-    if (saved) {
-      try {
-        const parsed: Booking[] = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const cleaned = parsed
-            .filter((b) => !isLegacyMockBooking(b))
-            .map((b) => ({
-              ...b,
-              teamName: b.teamName ? b.teamName.replace('Scotter United ', '') : '',
-            }));
-          localStorage.setItem('scotter_jfc_bookings', JSON.stringify(cleaned));
-          return cleaned;
-        }
-      } catch {}
-    }
-    return [];
-  });
+  // State is strictly driven by Firebase Firestore (initial state is empty)
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [faFixtures, setFaFixtures] = useState<FAFixture[]>([]);
+  const [slotChangeRequests, setSlotChangeRequests] = useState<SlotChangeRequest[]>([]);
 
   const [toastNotification, setToastNotification] = useState<{ message: string; type?: 'success' | 'info' } | null>(null);
 
@@ -87,200 +72,13 @@ export default function App() {
     }
   }, [toastNotification]);
 
-  const [faFixtures, setFaFixtures] = useState<FAFixture[]>(() => {
-    const saved = localStorage.getItem('scotter_jfc_fa_fixtures');
-    if (saved !== null) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const cleaned = parsed.filter((f) => !isLegacyMockFixture(f));
-          localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(cleaned));
-          return cleaned;
-        }
-      } catch (err) {
-        console.warn('Error parsing cached fa fixtures:', err);
-      }
-    }
-    return [];
-  });
-
+  // Purge any stale client-side storage on startup so no old data can ever leak
   useEffect(() => {
-    localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(faFixtures));
-  }, [faFixtures]);
-
-  // Ensure legacy 3v3 migrated to 5v5, heal team classifications, and ensure non-overlapping kick-off times
-  useEffect(() => {
-    const teamPitchMap = Object.fromEntries(SCOTTER_TEAMS.map(t => [t.name, t.pitchSize]));
-    const standardEarlySlots: Record<string, string[]> = {
-      '5v5': ['09:45', '10:45', '11:45', '12:45', '13:45'],
-      '7v7': ['09:30', '10:45', '12:00', '13:15', '14:45'],
-      '9v9': ['09:30', '11:00', '12:30', '14:00'],
-      '11v11': ['10:00', '12:00', '14:00'],
-    };
-
-    let currentFa = [...faFixtures];
-    let faChanged = false;
-
-    // 1. Map pitch formats correctly (allowing 3v3 and U7 matches to be hosted on 11v11, 9v9, 7v7, or 5v5)
-    currentFa = currentFa.map(f => {
-      const is3v3OrU7 = is3v3Match(f.scotterTeam || f.homeTeam, undefined, f.pitchId, f.competition) || isU7Team(f.scotterTeam || f.homeTeam);
-      if (is3v3OrU7 && ['11v11', '9v9', '7v7', '5v5'].includes(f.pitchId)) {
-        return f;
-      }
-      const canonicalPitch = teamPitchMap[f.scotterTeam] || ((f.pitchId as string) === '3v3' ? '9v9' : f.pitchId);
-      if (f.pitchId !== canonicalPitch) {
-        faChanged = true;
-        return { ...f, pitchId: canonicalPitch };
-      }
-      return f;
-    });
-
-    // 2. Ensure any fixture with 'Saints' in its homeTeam/awayTeam/competition is mapped to Saints, never Juniors
-    currentFa = currentFa.map(f => {
-      const matchContext = `${f.homeTeam} ${f.awayTeam} ${f.competition}`.toLowerCase();
-      if (/\bsaints?\b/i.test(matchContext) && f.scotterTeam.toLowerCase().includes('juniors')) {
-        const correctedTeam = f.scotterTeam.replace(/juniors?/gi, 'Saints');
-        faChanged = true;
-        return { ...f, scotterTeam: correctedTeam };
-      }
-      return f;
-    });
-
-    // 3. Resolve any clashing kick-off times on the same date and pitch format (ignoring loaded-in conflicting times)
-    const faDates = Array.from(new Set(currentFa.map(f => f.date))).sort();
-    faDates.forEach(date => {
-      (['5v5', '7v7', '9v9', '11v11'] as PitchSize[]).forEach(pid => {
-        const matchingFixes = currentFa.filter(f => f.date === date && f.pitchId === pid && (f.homeTeam.toLowerCase().includes('scotter') || f.scotterTeam.toLowerCase().includes('scotter')));
-        if (matchingFixes.length > 1) {
-          const usedSlots = new Set<string>();
-          let hasClash = false;
-          matchingFixes.forEach(f => {
-            if (usedSlots.has(f.timeSlot) || !f.timeSlot) hasClash = true;
-            usedSlots.add(f.timeSlot);
-          });
-          if (hasClash) {
-            const slots = standardEarlySlots[pid] || ['09:30', '11:00'];
-            matchingFixes.forEach((f, idx) => {
-              const targetSlot = slots[idx] || slots[slots.length - 1];
-              if (f.timeSlot !== targetSlot) {
-                currentFa = currentFa.map(item => item.id === f.id ? { ...item, timeSlot: targetSlot } : item);
-                faChanged = true;
-              }
-            });
-          }
-        }
-      });
-
-      // 4. Ensure 5v5 and U14 Girls 11v11 never overlap
-      const u14GirlsFixes = currentFa.filter(f => f.date === date && f.pitchId === '11v11' && isU14GirlsTeam(f.scotterTeam || f.homeTeam));
-      const fiveFixes = currentFa.filter(f => f.date === date && f.pitchId === '5v5');
-      if (u14GirlsFixes.length > 0 && fiveFixes.length > 0) {
-        u14GirlsFixes.forEach(u14f => {
-          const u14Start = parseTimeToMinutes(u14f.timeSlot);
-          const u14End = u14Start + 120;
-          const clashes = fiveFixes.some(f5 => {
-            const f5Start = parseTimeToMinutes(f5.timeSlot);
-            const f5End = f5Start + 60;
-            return u14Start < f5End && f5Start < u14End;
-          });
-          if (clashes || u14f.timeSlot === '10:00') {
-            const targetSlot = '14:00';
-            if (u14f.timeSlot !== targetSlot) {
-              currentFa = currentFa.map(item => item.id === u14f.id ? { ...item, timeSlot: targetSlot } : item);
-              faChanged = true;
-            }
-          }
-        });
-      }
-    });
-
-    if (faChanged) {
-      setFaFixtures(currentFa);
-      localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(currentFa));
-      syncFaFixturesListToFirestore(currentFa).catch(console.error);
-    }
-
-    let currentBookings = [...bookings];
-    let bookingsChanged = false;
-
-    // 1. Map pitch formats correctly (allowing 3v3 and U7 matches to be hosted on 11v11, 9v9, 7v7, or 5v5)
-    currentBookings = currentBookings.map(b => {
-      const is3v3OrU7 = is3v3Match(b.teamName, undefined, b.pitchId, b.notes) || isU7Team(b.teamName, b.notes);
-      if (is3v3OrU7 && ['11v11', '9v9', '7v7', '5v5'].includes(b.pitchId)) {
-        return b;
-      }
-      const canonicalPitch = teamPitchMap[b.teamName] || ((b.pitchId as string) === '3v3' ? '9v9' : b.pitchId);
-      if (b.pitchId !== canonicalPitch) {
-        bookingsChanged = true;
-        return { ...b, pitchId: canonicalPitch };
-      }
-      return b;
-    });
-
-    // 3. Ensure any booking with 'Saints' in its title/opponent/notes is mapped to Saints, never Juniors
-    currentBookings = currentBookings.map(b => {
-      const matchContext = `${b.title || ''} ${b.opponent || ''} ${b.notes || ''}`.toLowerCase();
-      if (/\bsaints?\b/i.test(matchContext) && b.teamName.toLowerCase().includes('juniors')) {
-        const correctedTeam = b.teamName.replace(/juniors?/gi, 'Saints');
-        bookingsChanged = true;
-        return { ...b, teamName: correctedTeam };
-      }
-      return b;
-    });
-
-    // 4. Resolve any clashing kick-off times on the same date and pitch format (ignoring loaded-in conflicting times)
-    const bookingDates = Array.from(new Set(currentBookings.map(b => b.date))).sort();
-    bookingDates.forEach(date => {
-      (['5v5', '7v7', '9v9', '11v11'] as PitchSize[]).forEach(pid => {
-        const pitchBookings = currentBookings.filter(b => b.date === date && b.pitchId === pid && b.status !== BookingStatus.DECLINED && b.status !== BookingStatus.UNBOOKED);
-        if (pitchBookings.length > 1) {
-          const usedSlots = new Set<string>();
-          let hasClash = false;
-          pitchBookings.forEach(b => {
-            if (usedSlots.has(b.timeSlot) || !b.timeSlot) hasClash = true;
-            usedSlots.add(b.timeSlot);
-          });
-          if (hasClash) {
-            const slots = standardEarlySlots[pid] || ['09:30', '11:00'];
-            pitchBookings.forEach((b, idx) => {
-              const targetSlot = slots[idx] || slots[slots.length - 1];
-              if (b.timeSlot !== targetSlot) {
-                currentBookings = currentBookings.map(item => item.id === b.id ? { ...item, timeSlot: targetSlot } : item);
-                bookingsChanged = true;
-              }
-            });
-          }
-        }
-      });
-
-      // 5. Ensure 5v5 and U14 Girls 11v11 never overlap
-      const u14GirlsBookings = currentBookings.filter(b => b.date === date && b.pitchId === '11v11' && isU14GirlsTeam(b.teamName) && b.status !== BookingStatus.DECLINED && b.status !== BookingStatus.UNBOOKED);
-      const fiveVFiveBookings = currentBookings.filter(b => b.date === date && b.pitchId === '5v5' && b.status !== BookingStatus.DECLINED && b.status !== BookingStatus.UNBOOKED);
-      if (u14GirlsBookings.length > 0 && fiveVFiveBookings.length > 0) {
-        u14GirlsBookings.forEach(u14b => {
-          const u14Start = parseTimeToMinutes(u14b.timeSlot);
-          const u14End = u14Start + 120;
-          const clashes = fiveVFiveBookings.some(f5 => {
-            const f5Start = parseTimeToMinutes(f5.timeSlot);
-            const f5End = f5Start + 60;
-            return u14Start < f5End && f5Start < u14End;
-          });
-          if (clashes || u14b.timeSlot === '10:00') {
-            const targetSlot = '14:00';
-            if (u14b.timeSlot !== targetSlot) {
-              currentBookings = currentBookings.map(item => item.id === u14b.id ? { ...item, timeSlot: targetSlot } : item);
-              bookingsChanged = true;
-            }
-          }
-        });
-      }
-    });
-
-    if (bookingsChanged) {
-      setBookings(currentBookings);
-      localStorage.setItem('scotter_jfc_bookings', JSON.stringify(currentBookings));
-      syncBookingsListToFirestore(currentBookings).catch(console.error);
-    }
+    try {
+      localStorage.removeItem('scotter_jfc_fa_fixtures');
+      localStorage.removeItem('scotter_jfc_bookings');
+      localStorage.removeItem('scotter_jfc_slot_changes');
+    } catch {}
   }, []);
 
   const [pitchConfigs, setPitchConfigs] = useState<PitchConfig[]>(() => {
@@ -308,26 +106,6 @@ export default function App() {
       return cfg;
     });
     return sortPitches(configs);
-  });
-
-  const [slotChangeRequests, setSlotChangeRequests] = useState<SlotChangeRequest[]>(() => {
-    const saved = localStorage.getItem('scotter_jfc_slot_changes');
-    if (saved) {
-      try {
-        const parsed: SlotChangeRequest[] = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const cleaned = parsed
-            .filter((sc) => !isLegacyMockSlotChange(sc))
-            .map((sc) => ({
-              ...sc,
-              teamName: sc.teamName ? sc.teamName.replace('Scotter United ', '') : '',
-            }));
-          localStorage.setItem('scotter_jfc_slot_changes', JSON.stringify(cleaned));
-          return cleaned;
-        }
-      } catch {}
-    }
-    return [];
   });
 
   const [users, setUsers] = useState<UserType[]>(() => {
@@ -477,7 +255,6 @@ export default function App() {
       onFaFixturesUpdate: (fetchedFixtures) => {
         if (fetchedFixtures) {
           setFaFixtures(fetchedFixtures);
-          localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(fetchedFixtures));
         }
       },
       onPitchConfigsUpdate: (fetchedConfigs) => {
@@ -612,12 +389,8 @@ export default function App() {
     // 1. Delete directly from Firestore faFixtures collection
     deleteFaFixtureFromFirestore(fixtureId).catch(console.error);
 
-    // 2. Remove from React state and localStorage immediately
-    setFaFixtures((prev) => {
-      const next = prev.filter((f) => f.id !== fixtureId);
-      localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(next));
-      return next;
-    });
+    // 2. Remove from React state immediately
+    setFaFixtures((prev) => prev.filter((f) => f.id !== fixtureId));
 
     // 3. Find and delete any linked booking in Firestore & bookings state
     if (fixtureToDelete) {
@@ -650,12 +423,8 @@ export default function App() {
       deleteFaFixturesBulkFromFirestore(fixtureIds).catch(console.error);
     }
 
-    // 2. Update faFixtures state & localStorage
-    setFaFixtures((prev) => {
-      const next = prev.filter((f) => !idSet.has(f.id));
-      localStorage.setItem('scotter_jfc_fa_fixtures', JSON.stringify(next));
-      return next;
-    });
+    // 2. Update faFixtures state
+    setFaFixtures((prev) => prev.filter((f) => !idSet.has(f.id)));
 
     // 3. Collect all linked booking IDs
     const allBookingIdsToDelete = new Set<string>(bookingIds || []);
@@ -678,11 +447,7 @@ export default function App() {
     if (allBookingIdsToDelete.size > 0) {
       const bIdsArray = Array.from(allBookingIdsToDelete);
       deleteBookingsBulkFromFirestore(bIdsArray).catch(console.error);
-      setBookings((prev) => {
-        const next = prev.filter((b) => !allBookingIdsToDelete.has(b.id));
-        localStorage.setItem('scotter_jfc_bookings', JSON.stringify(next));
-        return next;
-      });
+      setBookings((prev) => prev.filter((b) => !allBookingIdsToDelete.has(b.id)));
     }
 
     const totalCount = fixtureIds.length + allBookingIdsToDelete.size;
@@ -700,38 +465,28 @@ export default function App() {
       console.warn('Notice while clearing Firestore fixtures:', err);
     }
     setFaFixtures([]);
-    localStorage.removeItem('scotter_jfc_fa_fixtures');
-    setBookings((prev) => {
-      const next = prev.filter(
+    setBookings((prev) =>
+      prev.filter(
         (b) =>
           b.managerId !== 'fa-auto-import' &&
           !b.id.startsWith('b-pasted-import-') &&
           !b.id.startsWith('b-pasted-') &&
           !b.id.startsWith('b-auto-bulk-') &&
           !b.id.includes('fa-pasted') &&
-          !b.id.includes('fa-')
-      );
-      localStorage.setItem('scotter_jfc_bookings', JSON.stringify(next));
-      return next;
-    });
+          !b.id.includes('fa-') &&
+          !isLegacyMockBooking(b)
+      )
+    );
     setToastNotification({
       type: 'success',
       message: 'All fixtures and imported matches wiped from database. Ready for a clean reload!',
     });
   };
 
-  // Sync state to LocalStorage as secondary cache
-  useEffect(() => {
-    localStorage.setItem('scotter_jfc_bookings', JSON.stringify(bookings));
-  }, [bookings]);
-
+  // Sync state to LocalStorage for non-fixture preferences
   useEffect(() => {
     localStorage.setItem('scotter_jfc_pitch_configs', JSON.stringify(pitchConfigs));
   }, [pitchConfigs]);
-
-  useEffect(() => {
-    localStorage.setItem('scotter_jfc_slot_changes', JSON.stringify(slotChangeRequests));
-  }, [slotChangeRequests]);
 
   useEffect(() => {
     localStorage.setItem('scotter_jfc_current_user', JSON.stringify(currentUser));
@@ -1007,9 +762,13 @@ export default function App() {
     deleteBookingFromFirestore(id).catch(console.error);
   };
 
-  const handleClearAllBookings = () => {
+  const handleClearAllBookings = async () => {
     setBookings([]);
-    syncBookingsListToFirestore([]).catch(console.error);
+    try {
+      await clearAllBookingsFromFirestore();
+    } catch (err) {
+      console.warn('Notice while clearing bookings:', err);
+    }
   };
 
   // Update or reschedule an existing booking

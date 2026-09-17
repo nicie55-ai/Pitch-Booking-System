@@ -514,9 +514,26 @@ export async function clearAllFaFixturesFromFirestore() {
       batch.delete(docSnap.ref);
     });
     await executeInChunks(ops);
-    localStorage.removeItem('scotter_jfc_fa_fixtures');
+    try {
+      localStorage.removeItem('scotter_jfc_fa_fixtures');
+    } catch {}
   } catch (err) {
     console.warn('Failed clearing all FA fixtures from Firestore:', err);
+  }
+}
+
+export async function clearAllBookingsFromFirestore() {
+  try {
+    const snapshot = await getDocs(collection(db, COLLECTIONS.BOOKINGS));
+    const ops = snapshot.docs.map((docSnap) => (batch: ReturnType<typeof writeBatch>) => {
+      batch.delete(docSnap.ref);
+    });
+    await executeInChunks(ops);
+    try {
+      localStorage.removeItem('scotter_jfc_bookings');
+    } catch {}
+  } catch (err) {
+    console.warn('Failed clearing all bookings from Firestore:', err);
   }
 }
 
@@ -531,13 +548,17 @@ export async function clearAllFaImportedBookingsFromFirestore() {
         d.id.startsWith('b-pasted-') ||
         d.id.startsWith('b-auto-bulk-') ||
         d.id.includes('fa-pasted') ||
-        d.id.includes('fa-')
+        d.id.includes('fa-') ||
+        isLegacyMockBooking(data)
       );
     });
     const ops = faBookings.map((docSnap) => (batch: ReturnType<typeof writeBatch>) => {
       batch.delete(docSnap.ref);
     });
     await executeInChunks(ops);
+    try {
+      localStorage.removeItem('scotter_jfc_bookings');
+    } catch {}
   } catch (err) {
     console.warn('Failed clearing FA imported bookings from Firestore:', err);
   }
