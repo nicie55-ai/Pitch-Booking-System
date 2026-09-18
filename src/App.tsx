@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Calendar, ClipboardList, Settings, Shield, User, HelpCircle, CheckCircle, Info, X } from 'lucide-react';
+import { Calendar, ClipboardList, Settings, Shield, User, HelpCircle, CheckCircle, Info, X, Wrench, ShieldAlert } from 'lucide-react';
 
 import { Booking, BookingStatus, PitchConfig, PitchSize, SlotChangeRequest, User as UserType, ClubTeam } from './types';
 import { DEFAULT_PITCH_CONFIGS, INITIAL_BOOKINGS, INITIAL_SLOT_CHANGES, MOCK_USERS, FAFixture, SCOTTER_TEAMS } from './mockData';
@@ -62,6 +62,7 @@ export default function App() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [faFixtures, setFaFixtures] = useState<FAFixture[]>([]);
   const [slotChangeRequests, setSlotChangeRequests] = useState<SlotChangeRequest[]>([]);
+  const [isMaintenanceMode, setIsMaintenanceMode] = useState<boolean>(true);
 
   const [toastNotification, setToastNotification] = useState<{ message: string; type?: 'success' | 'info' } | null>(null);
 
@@ -908,6 +909,56 @@ export default function App() {
 
   // Count pending bookings for indicator badge
   const pendingBookingsCount = bookings.filter((b) => b.status === BookingStatus.PENDING).length;
+
+  if (isMaintenanceMode && (!currentUser || currentUser.role !== 'ADMIN')) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 font-sans">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-8 text-center relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 via-blue-500 to-indigo-500"></div>
+          
+          <div className="w-16 h-16 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-inner">
+            <Wrench className="w-8 h-8 animate-bounce" />
+          </div>
+
+          <span className="inline-block bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[11px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-3">
+            Work in Progress & Maintenance
+          </span>
+
+          <h1 className="text-2xl font-black tracking-tight text-white mb-3">
+            System Temporarily Locked
+          </h1>
+
+          <p className="text-slate-400 text-sm leading-relaxed mb-8">
+            Scotter United JFC Pitch Booking & Fixture Calendar is currently undergoing scheduled maintenance and fixture realignment. Public access is disabled while we update the live database.
+          </p>
+
+          <div className="space-y-3">
+            <button
+              onClick={() => setIsLoginModalOpen(true)}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-3 px-4 rounded-xl shadow-lg transition-all text-sm uppercase tracking-wider cursor-pointer flex items-center justify-center space-x-2"
+            >
+              <Shield className="w-4 h-4" />
+              <span>Admin / Manager Sign In</span>
+            </button>
+          </div>
+
+          <p className="mt-8 text-[11px] text-slate-500">
+            Scotter United Junior Football Club &copy; {new Date().getFullYear()}
+          </p>
+        </div>
+
+        {/* Login Modal */}
+        {isLoginModalOpen && (
+          <LoginModal
+            isOpen={isLoginModalOpen}
+            onClose={() => setIsLoginModalOpen(false)}
+            users={users}
+            onLoginSuccess={handleLogin}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-blue-200">
