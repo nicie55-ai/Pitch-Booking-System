@@ -138,6 +138,16 @@ export default function PitchDiary({
     setFilterManagerOnly(!!currentUser.teamName);
   }, [currentUser]);
 
+  const getLinkedFaFixtureId = (booking: Booking): string | undefined => {
+    const found = faFixtures.find(f => 
+      booking.id.includes(f.id) ||
+      (f.pitchId === booking.pitchId && f.date === booking.date && f.timeSlot === booking.timeSlot) ||
+      (booking.notes && (booking.notes.includes(f.homeTeam) || booking.notes.includes(f.awayTeam) || f.homeTeam.includes(booking.notes) || f.awayTeam.includes(booking.notes))) ||
+      (booking.teamName && (booking.teamName.includes(f.homeTeam) || booking.teamName.includes(f.awayTeam) || f.scotterTeam.includes(booking.teamName) || booking.teamName.includes(f.scotterTeam)))
+    );
+    return found?.id;
+  };
+
   // Get active day of the week
   const dateObj = parseDateLocal(selectedDate);
   const dayName = dateObj.toLocaleDateString('en-GB', { weekday: 'long' });
@@ -580,7 +590,10 @@ export default function PitchDiary({
                 </div>
                 <div className="flex items-center space-x-2 self-start sm:self-center">
                   <button
-                    onClick={() => onRequestBooking(b.pitchId, b.timeSlot, b.notes, b.date, b.id)}
+                    onClick={() => {
+                      const linkedFixtureId = getLinkedFaFixtureId(b);
+                      onRequestBooking(b.pitchId, b.timeSlot, b.notes, b.date, b.id, linkedFixtureId);
+                    }}
                     className="bg-blue-900 hover:bg-blue-800 text-white text-[11px] font-extrabold py-2 px-4 rounded-lg shadow-sm transition-colors whitespace-nowrap cursor-pointer flex items-center space-x-1"
                   >
                     <span>Rebook Slot</span>
@@ -866,17 +879,14 @@ export default function PitchDiary({
                             }}
                             onClick={() => {
                               if (currentUser.role === 'ADMIN' && booking.teamName !== 'PITCH BLOCKED') {
-                                const linkedFaFixture = faFixtures.find(f => 
-                                  (f.pitchId === booking.pitchId && f.date === booking.date && f.timeSlot === booking.timeSlot) ||
-                                  (booking.notes && (booking.notes.includes(f.homeTeam) || booking.notes.includes(f.awayTeam)))
-                                );
+                                const linkedFixtureId = getLinkedFaFixtureId(booking);
                                 onRequestBooking(
                                   booking.pitchId,
                                   booking.timeSlot,
                                   booking.notes,
                                   booking.date,
                                   booking.id,
-                                  linkedFaFixture?.id
+                                  linkedFixtureId
                                 );
                               }
                             }}

@@ -545,25 +545,40 @@ export default function App() {
     let targetFaFixture = targetFixtureId ? faFixtures.find((f) => f.id === targetFixtureId) : undefined;
 
     if (!targetFaFixture) {
-      targetFaFixture = faFixtures.find((f) => {
-        if (modalPrefills.bookingId) {
-          const b = bookings.find((bk) => bk.id === modalPrefills.bookingId);
-          if (
-            b &&
-            ((b.pitchId === f.pitchId && b.date === f.date && b.timeSlot === f.timeSlot) ||
-              (b.notes && (b.notes.includes(f.homeTeam) || b.notes.includes(f.awayTeam))))
-          ) {
-            return true;
-          }
+      if (modalPrefills.bookingId) {
+        const b = bookings.find((bk) => bk.id === modalPrefills.bookingId);
+        if (b) {
+          targetFaFixture = faFixtures.find((f) => 
+            b.id.includes(f.id) ||
+            (f.pitchId === b.pitchId && f.date === b.date && f.timeSlot === b.timeSlot) ||
+            (b.notes && (b.notes.includes(f.homeTeam) || b.notes.includes(f.awayTeam) || f.homeTeam.includes(b.notes) || f.awayTeam.includes(b.notes))) ||
+            (b.teamName && (b.teamName.includes(f.homeTeam) || b.teamName.includes(f.awayTeam) || f.scotterTeam.includes(b.teamName) || b.teamName.includes(f.scotterTeam)))
+          );
         }
+      }
+    }
+
+    if (!targetFaFixture) {
+      targetFaFixture = faFixtures.find((f) => {
         if (data.notes) {
           const notesLower = data.notes.toLowerCase();
           const homeLower = f.homeTeam.toLowerCase();
           const awayLower = f.awayTeam.toLowerCase();
           if (
-            (notesLower.includes(homeLower) && notesLower.includes(awayLower)) ||
-            (notesLower.includes(homeLower) && notesLower.includes('vs'))
+            notesLower.includes(homeLower) ||
+            notesLower.includes(awayLower) ||
+            homeLower.includes(notesLower) ||
+            awayLower.includes(notesLower)
           ) {
+            return true;
+          }
+        }
+        if (data.teamName) {
+          const teamLower = data.teamName.toLowerCase();
+          const scotterLower = f.scotterTeam.toLowerCase();
+          const homeLower = f.homeTeam.toLowerCase();
+          const awayLower = f.awayTeam.toLowerCase();
+          if (teamLower.includes(scotterLower) || scotterLower.includes(teamLower) || teamLower.includes(homeLower) || teamLower.includes(awayLower)) {
             return true;
           }
         }
